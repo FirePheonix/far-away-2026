@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package landing;
+
+service LandingService {
+  rpc GetStatus (StatusRequest) returns (StatusResponse);
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  string message = 1;
+  string version = 2;
+  bool healthy = 3;
+}
