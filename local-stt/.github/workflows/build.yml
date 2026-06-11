@@ -1,0 +1,129 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Generate icons
+        run: python generate_icons.py
+
+      - name: Build exe
+        run: |
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --name "local-stt" `
+            --icon "assets\icon.ico" `
+            --collect-all faster_whisper `
+            --collect-all ctranslate2 `
+            --collect-all customtkinter `
+            --collect-all sounddevice `
+            --hidden-import pystray._win32 `
+            --hidden-import pynput.keyboard._win32 `
+            --hidden-import pynput.mouse._win32 `
+            --hidden-import pyperclip `
+            app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/local-stt.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Generate icons
+        run: python generate_icons.py
+
+      - name: Build app
+        run: |
+          pyinstaller \
+            --windowed \
+            --onedir \
+            --name "local-stt" \
+            --icon "assets/icon.icns" \
+            --collect-all faster_whisper \
+            --collect-all ctranslate2 \
+            --collect-all customtkinter \
+            --collect-all sounddevice \
+            --hidden-import pystray._darwin \
+            --hidden-import pynput.keyboard._darwin \
+            --hidden-import pynput.mouse._darwin \
+            --hidden-import pyperclip \
+            --osx-bundle-identifier "com.localstt.app" \
+            app.py
+
+      - name: Zip app bundle
+        run: cd dist && zip -r local-stt-mac.zip local-stt.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: dist/local-stt-mac.zip
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: artifacts/
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-app
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/local-stt.exe
+            artifacts/local-stt-mac.zip
+          body: |
+            ## Installation
+
+            ### Windows
+            Download `local-stt.exe` and run it. No install needed.
+
+            ### macOS
+            Download `local-stt-mac.zip`, extract it, and move `local-stt.app` to your Applications folder.
+            On first launch, go to **System Settings → Privacy & Security → Accessibility** and allow local-stt.
+
+            ---
+            **Hotkey:** `Ctrl+Shift+Space` to start/stop recording. Result is auto-copied to clipboard.

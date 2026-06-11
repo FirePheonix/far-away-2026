@@ -1,40 +1,63 @@
-# Far Away Japan
+# Far Away
 
-A small monorepo with a Next.js client and an Express + gRPC server.
+Voice assistant stack with separate frontend and backend (not a monorepo — each app has its own dependencies and deploys independently).
 
-## Getting Started
+## Project structure
 
-Install dependencies from the project root:
-
-```bash
-npm install
+```
+far-away-2026/
+├── client/      # Next.js frontend  → deploy to Vercel / static host
+├── backend/     # Express + Inngest assistant API  → deploy to Railway / Fly / etc.
+└── local-stt/   # Desktop speech-to-text  → links to backend after dictation
 ```
 
-Run both apps together:
+## Quick start
+
+Each folder is independent. Install and run separately:
+
+### Backend (port 4001)
 
 ```bash
+cd backend
+cp .env.example .env   # set OPENAI_API_KEY
+npm install
 npm run dev
 ```
 
-Run one side at a time:
+Inngest dev server (optional, for async workflows):
 
 ```bash
-npm run dev:client
-npm run dev:server
+npm run inngest:dev
 ```
 
-## Available Scripts
+### Frontend (port 3000)
 
-- `npm run dev` - starts the client and server together
-- `npm run dev:client` - starts the Next.js app
-- `npm run dev:server` - starts the API and gRPC server
-- `npm run build` - builds both workspaces
+```bash
+cd client
+cp .env.example .env.local
+npm install
+npm run dev
+```
 
-## Project Structure
+### Local STT (desktop)
 
-- `client/` - Next.js frontend
-- `server/` - Express HTTP API and gRPC backend
+```bash
+cd local-stt
+python -m venv venv
+venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+cp .env.example .env
+python app.py
+```
 
-## Notes
+Press **Ctrl+Shift+Space** to record. Transcript is copied to clipboard and sent to `http://localhost:4001/api/assistant`.
 
-This repository uses npm workspaces, so dependencies are installed once at the root and shared by both packages.
+## Deploy separately
+
+| App | Folder | Typical host |
+|-----|--------|--------------|
+| Frontend | `client/` | Vercel, Netlify |
+| Backend | `backend/` | Railway, Fly.io, Render |
+| Local STT | `local-stt/` | User's machine (not deployed) |
+
+Set `ASSISTANT_API_URL` in `local-stt/.env` to your production backend URL when not running locally.

@@ -1,5 +1,12 @@
-# dependencies
+# dependencies (per-app only — no root node_modules)
 node_modules/
+
+# python (local-stt)
+local-stt/venv/
+local-stt/.venv/
+local-stt/dist/
+local-stt/build/
+local-stt/__pycache__/
 
 # build output
 dist/

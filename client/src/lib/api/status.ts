@@ -5,7 +5,7 @@ import {
   type StatusResponse,
 } from "@/lib/schemas/landing";
 
-const API_URL = process.env.API_URL ?? "http://localhost:4000";
+const API_URL = process.env.API_URL ?? "http://localhost:4001/api";
 
 export async function fetchLandingStatus(): Promise<StatusResponse> {
   const response = await fetch(`${API_URL}/health`, {

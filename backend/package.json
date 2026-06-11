@@ -1,18 +1,21 @@
 {
-  "name": "server",
+  "name": "backend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/server.js",
+    "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:4001/api/inngest"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.13.4",
-    "@grpc/proto-loader": "^0.7.15",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "inngest": "^3.32.7",
+    "openai": "^4.77.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
