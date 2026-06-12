@@ -140,8 +140,8 @@ export const PLANNER_EXAMPLES = [
           tool: "calendar.create_event",
           params: {
             title: "Meeting with Hackathon Winner",
-            start: "TOMORROW_14:00_ISO",
-            end: "TOMORROW_15:00_ISO",
+            start: "2024-12-05T14:00:00Z",
+            end: "2024-12-05T15:00:00Z",
             meetLinkFromPreviousStep: true,
             emailFromPreviousStep: true,
           },

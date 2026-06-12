@@ -31,26 +31,44 @@ export async function createEvent(params: {
   const { calendar } = await getGoogleClients();
   const tz = params.timeZone ?? "UTC";
 
-  const response = await calendar.events.insert({
-    calendarId: calendarId(params.calendarId),
-    conferenceDataVersion: params.meetLink ? 0 : 1,
-    requestBody: {
-      summary: params.title,
-      description: params.description,
-      start: { dateTime: params.start, timeZone: tz },
-      end: { dateTime: params.end, timeZone: tz },
-      attendees: params.attendees?.map((email) => ({ email })),
-      conferenceData: params.meetLink
-        ? undefined
-        : {
-            createRequest: {
-              requestId: `meet-${Date.now()}`,
-              conferenceSolutionKey: { type: "hangoutsMeet" },
-            },
+  const requestBody = {
+    summary: params.title,
+    description: params.description,
+    start: { dateTime: params.start, timeZone: tz },
+    end: { dateTime: params.end, timeZone: tz },
+    attendees: params.attendees?.map((email) => ({ email })),
+    conferenceData: params.meetLink
+      ? undefined
+      : {
+          createRequest: {
+            requestId: `meet-${Date.now()}`,
+            conferenceSolutionKey: { type: "hangoutsMeet" },
           },
-      location: params.meetLink,
-    },
-  });
+        },
+    location: params.meetLink,
+  };
+
+  let response;
+  try {
+    response = await calendar.events.insert({
+      calendarId: calendarId(params.calendarId),
+      conferenceDataVersion: params.meetLink ? 0 : 1,
+      requestBody,
+    });
+  } catch (err: any) {
+    const errMsg = err.response?.data?.error?.message || err.message || "";
+    if (errMsg.includes("Domain-Wide Delegation")) {
+      // Retry without attendees since this service account can't invite people
+      delete requestBody.attendees;
+      response = await calendar.events.insert({
+        calendarId: calendarId(params.calendarId),
+        conferenceDataVersion: params.meetLink ? 0 : 1,
+        requestBody,
+      });
+    } else {
+      throw err;
+    }
+  }
 
   const meetLink =
     params.meetLink ??

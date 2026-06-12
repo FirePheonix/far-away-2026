@@ -30,7 +30,9 @@ export class ToolExecutionError extends AppError {
       `Tool execution failed: ${toolName}`,
       500,
       "TOOL_EXECUTION_ERROR",
-      cause instanceof Error ? cause.message : cause,
+      cause instanceof Error 
+        ? ((cause as any).response?.data ? JSON.stringify((cause as any).response.data) : cause.message)
+        : cause,
     );
     this.name = "ToolExecutionError";
   }
