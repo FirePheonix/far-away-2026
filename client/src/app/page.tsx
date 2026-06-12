@@ -1,20 +1,62 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 import { fetchLandingStatus } from "@/lib/api/status";
 import {
-  Satellite,
-  ShieldAlert,
   Activity,
-  Orbit,
-  Radio,
-  Route,
-  BarChart3,
   ArrowRight,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Command,
+  Mail,
+  MessageSquare,
+  Search,
+  Server,
+  Sparkles,
   Zap,
-  Globe,
-  Eye,
 } from "lucide-react";
+
+// Mock data for the Live Logs
+const LIVE_LOGS = [
+  { id: 1, time: "16:45:02", message: "Listening for voice input...", status: "pending" },
+  { id: 2, time: "16:45:05", message: "Transcription received: 'Schedule a meeting with the winner from Hackathon Winners tomorrow at 5pm'", status: "success" },
+  { id: 3, time: "16:45:06", message: "Planner: Analyzing request and selecting tools...", status: "success" },
+  { id: 4, time: "16:45:07", message: "Executing tool: sheets.get_last_row(sheetName: 'Hackathon Winners')", status: "success" },
+  { id: 5, time: "16:45:08", message: "Tool success: Found row { name: 'Alice Smith', email: 'alice@example.com' }", status: "success" },
+  { id: 6, time: "16:45:08", message: "Executing tool: meet.create_link()", status: "success" },
+  { id: 7, time: "16:45:09", message: "Tool success: Generated link https://meet.google.com/abc-defg-hij", status: "success" },
+  { id: 8, time: "16:45:09", message: "Executing tool: calendar.create_event(title: 'Meeting with Hackathon Winner', start: '2024-12-05T17:00:00Z')", status: "active" },
+];
+
+// Mock data for the Action History
+const ACTION_HISTORY = [
+  {
+    id: 101,
+    title: "Scheduled Meeting",
+    description: "Meeting with Hackathon Winner tomorrow at 5:00 PM.",
+    time: "Just now",
+    icon: <Calendar className="h-5 w-5 text-blue-600" />,
+    bgColor: "bg-blue-50",
+    borderColor: "border-blue-100",
+  },
+  {
+    id: 102,
+    title: "Sent Email",
+    description: "Follow-up email sent to john.doe@example.com regarding Q3 results.",
+    time: "10 mins ago",
+    icon: <Mail className="h-5 w-5 text-emerald-600" />,
+    bgColor: "bg-emerald-50",
+    borderColor: "border-emerald-100",
+  },
+  {
+    id: 103,
+    title: "Searched Knowledge Base",
+    description: "Found 3 articles related to 'product refinement remaining tasks'.",
+    time: "1 hour ago",
+    icon: <Search className="h-5 w-5 text-purple-600" />,
+    bgColor: "bg-purple-50",
+    borderColor: "border-purple-100",
+  },
+];
 
 export default async function Home() {
   let status = null;
@@ -27,213 +69,243 @@ export default async function Home() {
   }
 
   return (
-    <div className="relative min-h-full bg-[#040810] text-slate-100 selection:bg-teal-900/50 overflow-hidden">
-      {/* ─── Starfield Dot Grid ─── */}
-      <div
-        className="pointer-events-none fixed inset-0 z-0 opacity-[0.15]"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle, #64748b 0.5px, transparent 0.5px)",
-          backgroundSize: "24px 24px",
-        }}
-      />
-
-      {/* ─── Ambient Glow (very subtle, no heavy gradients) ─── */}
-      <div className="pointer-events-none fixed top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[600px] rounded-full bg-teal-500/[0.04] blur-[160px] z-0" />
-      <div className="pointer-events-none fixed bottom-0 right-0 w-[600px] h-[400px] rounded-full bg-violet-600/[0.03] blur-[120px] z-0" />
-
-      {/* ─── NAV ─── */}
-      <nav className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#040810]/80 backdrop-blur-xl">
+    <div className="min-h-screen bg-[#FAFAFA] text-slate-900 selection:bg-blue-100 font-sans overflow-x-hidden">
+      {/* ─── HEADER ─── */}
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200/80 shadow-sm">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 sm:px-10">
-          <div className="flex items-center gap-2.5">
-            <Orbit className="h-5 w-5 text-teal-400" />
-            <span className="text-lg font-semibold tracking-wide text-white">
-              ORBITAL<span className="text-teal-400">.AI</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-slate-900 text-white shadow-sm">
+              <Command className="h-4 w-4" />
+            </div>
+            <span className="text-[17px] font-semibold tracking-tight text-slate-900">
+              Workspace Assistant
             </span>
           </div>
 
-          <div className="hidden sm:flex items-center gap-8 text-sm text-slate-400">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#metrics" className="hover:text-white transition-colors">Metrics</a>
-            <a href="#capabilities" className="hover:text-white transition-colors">Capabilities</a>
+          <div className="flex items-center gap-6">
+            <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-500">
+              <a href="#features" className="hover:text-slate-900 transition-colors">Features</a>
+              <a href="#demo" className="hover:text-slate-900 transition-colors">Live Demo</a>
+              <a href="#docs" className="hover:text-slate-900 transition-colors">Documentation</a>
+            </nav>
+            <div className="h-4 w-px bg-slate-200 hidden md:block"></div>
+            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
+              <Server className="h-4 w-4" />
+              <span className="hidden sm:inline">System Status</span>
+            </div>
+            <StatusPill status={status} error={error} />
           </div>
-
-          <StatusPill status={status} error={error} />
         </div>
-      </nav>
+      </header>
 
-      <main className="relative z-10">
-        {/* ═══════════════ HERO ═══════════════ */}
-        <section className="mx-auto max-w-7xl px-6 sm:px-10 pt-24 pb-32 sm:pt-36 sm:pb-40">
-          <div className="max-w-4xl space-y-8">
-            {/* Status badge */}
-            <div className="inline-flex items-center gap-2 rounded-full border border-teal-500/20 bg-teal-500/[0.06] px-4 py-1.5 text-xs font-medium uppercase tracking-widest text-teal-400">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-teal-400" />
-              </span>
-              Orbital Network Active
+      <main>
+        {/* ═══════════════ HERO SECTION ═══════════════ */}
+        <section className="relative pt-24 pb-32 overflow-hidden">
+          {/* Subtle background pattern */}
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"></div>
+
+          <div className="mx-auto max-w-5xl px-6 sm:px-10 relative z-10 text-center animate-in fade-in slide-in-from-bottom-8 duration-1000">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-blue-700 text-sm font-medium mb-8">
+              <Sparkles className="h-4 w-4" />
+              <span>Workspace Assistant v2.0 is live</span>
             </div>
-
-            <h1 className="text-5xl sm:text-7xl lg:text-[5.5rem] font-bold tracking-tight leading-[1.05]">
-              Autonomous Orbital
-              <br />
-              <span className="text-teal-400">Traffic Control</span>
+            
+            <h1 className="text-5xl sm:text-7xl font-bold tracking-tight text-slate-900 mb-6 leading-[1.1]">
+              Your Autonomous <br />
+              <span className="text-blue-600">Engineering Partner</span>
             </h1>
-
-            <p className="max-w-2xl text-lg sm:text-xl leading-relaxed text-slate-400">
-              AI-driven infrastructure that monitors, predicts, and manages orbital traffic in real time — preventing collisions and optimizing space lane efficiency for the next era of spaceflight.
+            
+            <p className="max-w-2xl mx-auto text-lg sm:text-xl text-slate-500 mb-10 leading-relaxed">
+              Delegate your calendar, email, and knowledge search to an AI that actually understands your workflow. Just speak, and watch it execute in real-time.
             </p>
-
-            <div className="flex flex-wrap gap-4 pt-4">
-              <Button
-                className="bg-teal-500 text-[#040810] font-semibold hover:bg-teal-400 border-0 h-12 px-7 text-sm transition-all"
-                render={<Link href="#features" />}
-                nativeButton={false}
-              >
-                Explore Platform
+            
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              <a href="#demo" className="inline-flex items-center justify-center h-12 px-8 rounded-full bg-slate-900 text-white font-medium hover:bg-slate-800 hover:-translate-y-0.5 transition-all shadow-lg hover:shadow-xl">
+                Watch Live Demo
                 <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-              <Button
-                render={<Link href="#metrics" />}
-                nativeButton={false}
-                variant="outline"
-                className="border-slate-700/80 bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] hover:text-white h-12 px-7 text-sm transition-all"
-              >
-                View Live Metrics
-              </Button>
+              </a>
+              <a href="#docs" className="inline-flex items-center justify-center h-12 px-8 rounded-full bg-white text-slate-700 border border-slate-200 font-medium hover:bg-slate-50 transition-colors shadow-sm">
+                View Documentation
+              </a>
             </div>
           </div>
         </section>
 
-        {/* ═══════════════ METRICS BAR ═══════════════ */}
-        <section id="metrics" className="border-y border-white/[0.06] bg-white/[0.015]">
-          <div className="mx-auto grid max-w-7xl grid-cols-2 sm:grid-cols-4 divide-x divide-white/[0.06]">
-            {[
-              { value: "34,200+", label: "Objects Tracked", icon: <Eye className="h-4 w-4 text-teal-400" /> },
-              { value: "< 2ms", label: "Decision Latency", icon: <Zap className="h-4 w-4 text-amber-400" /> },
-              { value: "99.97%", label: "Collision Prevention", icon: <ShieldAlert className="h-4 w-4 text-emerald-400" /> },
-              { value: "24/7", label: "Autonomous Ops", icon: <Globe className="h-4 w-4 text-violet-400" /> },
-            ].map((stat) => (
-              <div key={stat.label} className="px-6 py-10 sm:px-10 sm:py-12 text-center">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  {stat.icon}
-                  <span className="text-2xl sm:text-3xl font-bold text-white tabular-nums">{stat.value}</span>
-                </div>
-                <span className="text-xs uppercase tracking-widest text-slate-500">{stat.label}</span>
+        {/* ═══════════════ PRODUCT SHOWCASE (THE DEMO) ═══════════════ */}
+        <section id="demo" className="mx-auto max-w-7xl px-6 sm:px-10 pb-32">
+          {/* Browser Window Mockup Container */}
+          <div className="rounded-2xl border border-slate-200/60 bg-white shadow-2xl shadow-slate-200/50 overflow-hidden animate-in fade-in slide-in-from-bottom-12 duration-1000 delay-300 fill-mode-both">
+            {/* Window Chrome */}
+            <div className="bg-slate-50 border-b border-slate-100 px-4 py-3 flex items-center gap-2">
+              <div className="flex gap-1.5">
+                <div className="h-3 w-3 rounded-full bg-red-400"></div>
+                <div className="h-3 w-3 rounded-full bg-amber-400"></div>
+                <div className="h-3 w-3 rounded-full bg-emerald-400"></div>
               </div>
-            ))}
-          </div>
-        </section>
+              <div className="mx-auto flex items-center justify-center bg-white border border-slate-200 rounded-md px-3 py-1 text-xs text-slate-400 font-medium w-64 shadow-sm">
+                <Command className="h-3 w-3 mr-1.5" />
+                workspace-assistant.local
+              </div>
+            </div>
 
-        {/* ═══════════════ FEATURES ═══════════════ */}
-        <section id="features" className="mx-auto max-w-7xl px-6 sm:px-10 py-28 sm:py-36">
-          <div className="mb-16 max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-widest text-teal-400 mb-4">Core Capabilities</p>
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
-              Intelligent infrastructure for safe orbital operations
-            </h2>
-          </div>
-
-          <div className="grid gap-px sm:grid-cols-2 lg:grid-cols-3 bg-white/[0.04] rounded-2xl overflow-hidden">
-            {[
-              {
-                icon: <Radio className="h-6 w-6 text-teal-400" />,
-                title: "Real-time Monitoring",
-                body: "Track every satellite, station, and debris fragment across all orbital regimes — LEO, MEO, GEO, and beyond — with sub-meter precision.",
-              },
-              {
-                icon: <BarChart3 className="h-6 w-6 text-amber-400" />,
-                title: "Congestion Prediction",
-                body: "Forecast orbital congestion windows and collision probabilities days in advance using physics-informed neural networks.",
-              },
-              {
-                icon: <Route className="h-6 w-6 text-sky-400" />,
-                title: "Dynamic Rerouting",
-                body: "Automatically compute and execute optimal trajectory changes to reroute spacecraft around high-risk zones in milliseconds.",
-              },
-              {
-                icon: <Activity className="h-6 w-6 text-emerald-400" />,
-                title: "Lane Optimization",
-                body: "Define and continuously refine virtual orbital lanes that maximize throughput while maintaining safe separation distances.",
-              },
-              {
-                icon: <ShieldAlert className="h-6 w-6 text-rose-400" />,
-                title: "Cascade Prevention",
-                body: "Detect early warning signs of Kessler syndrome scenarios and coordinate multi-satellite evasive maneuvers autonomously.",
-              },
-              {
-                icon: <Satellite className="h-6 w-6 text-violet-400" />,
-                title: "Fleet Integration",
-                body: "Seamlessly interface with any constellation operator through standardized APIs and real-time telemetry feeds.",
-              },
-            ].map((feature) => (
-              <article
-                key={feature.title}
-                className="group bg-[#040810] p-8 sm:p-10 transition-colors duration-200 hover:bg-white/[0.02]"
-              >
-                <div className="mb-6 inline-flex rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/[0.06] transition-all group-hover:ring-white/[0.1]">
-                  {feature.icon}
-                </div>
-                <h3 className="mb-3 text-lg font-semibold text-white">{feature.title}</h3>
-                <p className="text-sm leading-relaxed text-slate-400">{feature.body}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        {/* ═══════════════ CTA SECTION ═══════════════ */}
-        <section id="capabilities" className="border-t border-white/[0.06]">
-          <div className="mx-auto max-w-7xl px-6 sm:px-10 py-28 sm:py-36">
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.015] p-10 sm:p-16 text-center">
-              <div className="mx-auto max-w-2xl space-y-6">
-                <div className="inline-flex rounded-full bg-teal-500/[0.08] p-4">
-                  <Orbit className="h-8 w-8 text-teal-400" />
-                </div>
-                <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
-                  Ready to secure your orbital operations?
+            {/* Dashboard Content */}
+            <div className="p-6 sm:p-10 bg-slate-50/50">
+              <div className="mb-8">
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-900 mb-2">
+                  Assistant Console
                 </h2>
-                <p className="text-lg text-slate-400 leading-relaxed">
-                  Join the global consortium of space agencies and commercial operators already using Orbital AI to keep space safe and sustainable.
+                <p className="text-sm text-slate-500">
+                  Monitor real-time task execution and review recently completed automated actions.
                 </p>
-                <div className="flex flex-wrap justify-center gap-4 pt-4">
-                  <Button
-                    className="bg-teal-500 text-[#040810] font-semibold hover:bg-teal-400 border-0 h-12 px-8 text-sm transition-all"
-                    render={<Link href="#" />}
-                    nativeButton={false}
-                  >
-                    Request Access
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                  <Button
-                    render={<Link href="#" />}
-                    nativeButton={false}
-                    variant="outline"
-                    className="border-slate-700/80 bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] hover:text-white h-12 px-8 text-sm transition-all"
-                  >
-                    Read Documentation
-                  </Button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* ── LIVE EXECUTION LOGS ── */}
+                <div className="lg:col-span-7 flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-blue-600" />
+                      Live Execution Feed
+                    </h3>
+                    <span className="flex h-2.5 w-2.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+                    </span>
+                  </div>
+
+                  <div className="flex-1 rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+                    <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 flex items-center gap-3 text-xs font-medium text-slate-500 uppercase tracking-wider">
+                      <div className="w-20">Time</div>
+                      <div className="flex-1">Process</div>
+                      <div className="w-16 text-right">Status</div>
+                    </div>
+
+                    <div className="p-4 overflow-y-auto font-mono text-[13px] space-y-1 max-h-[400px]">
+                      {LIVE_LOGS.map((log) => (
+                        <div
+                          key={log.id}
+                          className={["flex items-start gap-3 p-2 rounded-md transition-colors", log.status === "active" ? "bg-blue-50/50" : "hover:bg-slate-50"].join(" ")}
+                        >
+                          <div className="w-20 text-slate-400 shrink-0 mt-0.5">[{log.time}]</div>
+                          <div
+                            className={["flex-1 leading-relaxed", log.status === "active" ? "text-blue-700 font-medium" : "text-slate-600"].join(" ")}
+                          >
+                            {log.message}
+                          </div>
+                          <div className="w-16 text-right shrink-0 mt-0.5">
+                            {log.status === "success" && (
+                              <span className="text-emerald-500">Done</span>
+                            )}
+                            {log.status === "active" && (
+                              <span className="text-blue-600 animate-pulse">Wait</span>
+                            )}
+                            {log.status === "pending" && (
+                              <span className="text-slate-400">...</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── RECENT ACTION LOGS ── */}
+                <div className="lg:col-span-5 flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-slate-500" />
+                      Recent Actions
+                    </h3>
+                  </div>
+
+                  <div className="flex-1 space-y-3">
+                    {ACTION_HISTORY.map((action) => (
+                      <div
+                        key={action.id}
+                        className="group relative flex gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 cursor-default"
+                      >
+                        <div
+                          className={["flex h-12 w-12 shrink-0 items-center justify-center rounded-full border", action.bgColor, action.borderColor].join(" ")}
+                        >
+                          {action.icon}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-1">
+                            <h4 className="font-semibold text-slate-900">{action.title}</h4>
+                            <span className="text-xs font-medium text-slate-400">
+                              {action.time}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-600 leading-relaxed">
+                            {action.description}
+                          </p>
+                        </div>
+                        
+                        {/* Subtle success indicator on hover */}
+                        <div className="absolute right-4 top-4 opacity-0 transition-opacity group-hover:opacity-100">
+                           <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* ─── FOOTER ─── */}
-        <footer className="border-t border-white/[0.06] py-10">
-          <div className="mx-auto max-w-7xl px-6 sm:px-10 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-slate-500 text-sm">
-              <Orbit className="h-4 w-4" />
-              <span>© 2026 Orbital AI. All rights reserved.</span>
+        {/* ═══════════════ FEATURES GRID ═══════════════ */}
+        <section id="features" className="bg-white border-t border-slate-200 py-32">
+          <div className="mx-auto max-w-7xl px-6 sm:px-10">
+            <div className="text-center max-w-2xl mx-auto mb-20">
+              <h2 className="text-3xl font-bold tracking-tight text-slate-900 mb-4">Built for Engineering Velocity</h2>
+              <p className="text-lg text-slate-500">Stop switching contexts. Let the assistant handle the busywork so you can stay in the flow.</p>
             </div>
-            <div className="flex items-center gap-6 text-xs text-slate-600">
-              <a href="#" className="hover:text-slate-400 transition-colors">Privacy</a>
-              <a href="#" className="hover:text-slate-400 transition-colors">Terms</a>
-              <a href="#" className="hover:text-slate-400 transition-colors">Contact</a>
+
+            <div className="grid md:grid-cols-3 gap-8">
+              {[
+                {
+                  title: "Smart Calendar Ops",
+                  desc: "Automatically finds free slots, resolves conflicts, and generates Meet links without you ever opening Google Calendar.",
+                  icon: <Calendar className="h-6 w-6 text-blue-600" />,
+                  bg: "bg-blue-50"
+                },
+                {
+                  title: "Intelligent Comms",
+                  desc: "Drafts and sends emails, searches past threads, and replies contextually based on your instructions.",
+                  icon: <Mail className="h-6 w-6 text-emerald-600" />,
+                  bg: "bg-emerald-50"
+                },
+                {
+                  title: "Knowledge Retrieval",
+                  desc: "Pulls data directly from your Google Sheets, finding emails, reading rows, and injecting context into workflows.",
+                  icon: <Zap className="h-6 w-6 text-amber-600" />,
+                  bg: "bg-amber-50"
+                }
+              ].map((feature, i) => (
+                <div key={i} className="p-8 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:shadow-xl transition-all duration-300">
+                  <div className={["h-12 w-12 rounded-xl flex items-center justify-center mb-6", feature.bg].join(" ")}>
+                    {feature.icon}
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-900 mb-3">{feature.title}</h3>
+                  <p className="text-slate-600 leading-relaxed">{feature.desc}</p>
+                </div>
+              ))}
             </div>
           </div>
-        </footer>
+        </section>
       </main>
+      
+      {/* ─── FOOTER ─── */}
+      <footer className="bg-slate-50 border-t border-slate-200 py-12">
+        <div className="mx-auto max-w-7xl px-6 sm:px-10 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-2 text-slate-900 font-semibold">
+            <Command className="h-5 w-5" />
+            <span>Workspace Assistant</span>
+          </div>
+          <p className="text-slate-500 text-sm">© 2026 Workspace Assistant. All rights reserved.</p>
+        </div>
+      </footer>
     </div>
   );
 }
