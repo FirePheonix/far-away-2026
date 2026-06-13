@@ -55,6 +55,10 @@ export async function executeAction(
   try {
     validatedParams = tool.paramsSchema.parse(resolvedParams);
   } catch (err) {
+    console.error(`[ToolRegistry] Param validation failed for "${action.tool}"`);
+    console.error(`[ToolRegistry] Raw params:`, JSON.stringify(action.params, null, 2));
+    console.error(`[ToolRegistry] Resolved params:`, JSON.stringify(resolvedParams, null, 2));
+    console.error(`[ToolRegistry] Validation error:`, err);
     throw new ToolExecutionError(action.tool, err);
   }
 
@@ -64,6 +68,9 @@ export async function executeAction(
     recordStepResult(context, stepIndex, action.tool, validatedResult);
     return validatedResult;
   } catch (err) {
+    console.error(`[ToolRegistry] Execution failed for "${action.tool}"`);
+    console.error(`[ToolRegistry] Validated params:`, JSON.stringify(validatedParams, null, 2));
+    console.error(`[ToolRegistry] Error:`, err);
     throw new ToolExecutionError(action.tool, err);
   }
 }
