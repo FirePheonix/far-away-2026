@@ -1,20 +1,18 @@
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import React from "react";
 import FadeIn from "./FadeIn";
-import { ArrowUpRight, Star } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import assets from "../data/assets.json";
 
 const ContactSection = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // In a real app, handle submission here
-    alert("Thank you for your message. We will get back to you shortly.");
+    alert("Thanks. We received your request and will get back to you soon.");
   };
 
   return (
     <div className="py-24">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Image Card */}
         <FadeIn className="lg:col-span-5 relative min-h-[500px] rounded-[2.5rem] overflow-hidden p-8 flex flex-col justify-end">
           <img
             src={assets.vercel.sections.contact_bg}
@@ -24,32 +22,22 @@ const ContactSection = () => {
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
 
           <div className="relative z-10 text-white">
-            {/* <div className="flex items-center gap-1 mb-4">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <Star key={s} size={12} fill="white" className="text-white" />
-              ))}
-              <span className="text-xs ml-2 opacity-80">
-                Helped over 100+ businesses
-              </span>
-            </div> */}
-
             <h2 className="text-4xl font-serif mb-4 leading-tight">
-              Turn confusion into clarity, today.
+              Build your conversation OS.
             </h2>
             <p className="text-sm opacity-80 mb-8 max-w-xs">
-              Book a free 30-minute assessment and we'll show you exactly where
-              AI can save you time and money.
+              Tell us your workflow and we will help you launch Clawvio with
+              the right integrations, automations, and run visibility.
             </p>
 
             <div className="flex items-center gap-6 text-xs font-medium uppercase tracking-widest opacity-60">
-              <span>venice.</span>
-              <span>CALIFORNIA</span>
-              <span>*Hamilton</span>
+              <span>Clawvio</span>
+              <span>Conversation-first</span>
+              <span>Execution-ready</span>
             </div>
           </div>
         </FadeIn>
 
-        {/* Right Form */}
         <FadeIn
           delay={0.2}
           className="lg:col-span-7 bg-[#F2F0ED] rounded-[2.5rem] p-8 md:p-12 flex flex-col justify-center"
@@ -80,15 +68,15 @@ const ContactSection = () => {
 
             <div className="space-y-4">
               <label className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2">
-                What services are you interested in?
+                What do you want to enable first?
               </label>
               <div className="flex flex-wrap gap-2">
                 {[
-                  "AI Assessment",
-                  "Workflow Automation",
-                  "Custom AI Tools",
-                  "Training & Support",
-                  "Implementing AI",
+                  "Voice-to-action",
+                  "Google Workspace automation",
+                  "Task + notes orchestration",
+                  "Team run tracking",
+                  "Knowledge base growth",
                   "All of the above",
                 ].map((opt, i) => (
                   <label key={i} className="cursor-pointer">
@@ -103,14 +91,14 @@ const ContactSection = () => {
 
             <div className="space-y-4">
               <label className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2">
-                What's your biggest automation challenge?
+                Current blocker
               </label>
               <div className="flex flex-wrap gap-2">
                 {[
-                  "Too many manual tasks",
-                  "Unclear where to start",
-                  "Previous solutions didn't work",
-                  "Need to scale operations",
+                  "Too many disconnected tools",
+                  "Manual follow-up workload",
+                  "No reliable execution layer",
+                  "Knowledge scattered everywhere",
                 ].map((opt, i) => (
                   <label key={i} className="cursor-pointer">
                     <input
@@ -128,7 +116,7 @@ const ContactSection = () => {
 
             <div className="space-y-2">
               <textarea
-                placeholder="Tell us about your business..."
+                placeholder="Share your workflow and tools..."
                 rows={4}
                 className="w-full bg-[#E5E2DC] border-0 rounded-xl px-4 py-3 text-brand-dark focus:ring-1 focus:ring-brand-dark/20 outline-none transition-all resize-none placeholder:text-brand-text/40"
               ></textarea>
@@ -139,7 +127,7 @@ const ContactSection = () => {
               className="w-full bg-brand-dark text-white font-medium py-4 rounded-full hover:bg-black transition-transform hover:scale-[1.01] active:scale-[0.99] duration-300 flex items-center justify-center gap-2"
               name="book-call"
             >
-              Book a call <ArrowUpRight size={16} />
+              Request onboarding <ArrowUpRight size={16} />
             </button>
 
             <p className="text-[10px] text-center text-brand-text/40">
@@ -153,4 +141,3 @@ const ContactSection = () => {
 };
 
 export default ContactSection;
-
