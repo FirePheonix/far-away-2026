@@ -6,29 +6,29 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const faqs = [
   {
-    question: "Do I need technical knowledge to work with you?",
+    question: "Does Clawvio execute real actions or just suggest them?",
     answer:
-      "Not at all. We handle all the technical aspects. You just need to know your business goals.",
+      "It executes real actions through connected apps like Gmail, Calendar, Sheets, Docs, Slack, GitHub, and Notion using authenticated integrations.",
   },
   {
-    question: "How long does it take to see results?",
+    question: "How does Clawvio build my personal knowledge base?",
     answer:
-      "Typically, our clients start seeing measurable time savings within 2-4 weeks of implementation.",
+      "Each request, workflow step, and result is captured as structured run history so decisions and outcomes stay searchable and reusable.",
   },
   {
-    question: "What if the automation doesn't work for my business?",
+    question: "Can I control what data Clawvio can access?",
     answer:
-      "We start with a discovery phase to ensure viability. If we can't help, we'll tell you upfront.",
+      "Yes. Access is controlled by the apps and scopes you connect via OAuth, and you can revoke or reconnect integrations anytime.",
   },
   {
-    question: "How much does it cost?",
+    question: "Will this work for both solo users and teams?",
     answer:
-      "We offer project-based pricing tailored to your specific needs, starting with a clear ROI calculation.",
+      "Yes. Solo users get a personal command center, while teams get shared operational memory and consistent execution across workflows.",
   },
   {
-    question: "What happens after implementation?",
+    question: "How quickly can we start seeing value?",
     answer:
-      "We provide ongoing support and optimization to ensure your systems grow with your business.",
+      "Most teams get value in the first week by automating routine follow-ups, scheduling, and cross-tool updates through one interface.",
   },
 ];
 
@@ -43,12 +43,11 @@ const FAQSection = () => {
             FAQ
           </span>
           <h2 className="text-4xl md:text-5xl font-serif text-brand-dark">
-            Your questions{" "}
-            <span className="italic text-brand-text/50">answered.</span>
+            Everything you need to {" "}
+            <span className="italic text-brand-text/50">run with Clawvio.</span>
           </h2>
           <p className="mt-6 text-brand-text max-w-md mx-auto text-sm">
-            Everything you need to know about working with us. Still have
-            questions? Book a free call and we'll walk you through it.
+            Product, security, integrations, and execution - all in one place.
           </p>
         </FadeIn>
       </div>
@@ -61,9 +60,7 @@ const FAQSection = () => {
               className="w-full text-left bg-[#F5F4F1] rounded-xl p-6 flex items-center justify-between hover:bg-[#EBE9E4] transition-colors"
               name="faq"
             >
-              <span className="font-medium text-brand-dark">
-                {faq.question}
-              </span>
+              <span className="font-medium text-brand-dark">{faq.question}</span>
               <span className="text-brand-dark/50">
                 {openIndex === idx ? <Minus size={20} /> : <Plus size={20} />}
               </span>
@@ -90,4 +87,3 @@ const FAQSection = () => {
 };
 
 export default FAQSection;
-

@@ -6,24 +6,24 @@ import Link from "next/link";
 const steps = [
   {
     id: "01",
-    title: "Discovery & Assessment",
-    tag: "Week 1",
+    title: "Capture intent",
+    tag: "Instant",
     description:
-      "We analyze your workflows and identify where automation creates the most value for your business.",
+      "Capture voice or text requests and preserve context from your meetings, notes, and tasks.",
   },
   {
     id: "02",
-    title: "Build & Deploy",
-    tag: "Weeks 2-4",
+    title: "Plan and orchestrate",
+    tag: "Seconds",
     description:
-      "We create and launch custom systems tailored to your operations without disrupting daily work.",
+      "Clawvio converts your request into structured steps and routes them to the right connected apps.",
   },
   {
     id: "03",
-    title: "Train & Support",
-    tag: "Ongoing",
+    title: "Execute and remember",
+    tag: "Continuous",
     description:
-      "We train your team and provide ongoing support to keep your automation running smoothly.",
+      "Actions are executed asynchronously, results are logged, and your knowledge base grows with every run.",
   },
 ];
 
@@ -31,21 +31,18 @@ const ProcessSection = () => {
   return (
     <div className="py-24 border-t border-brand-dark/5">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
-        {/* Left Content */}
         <div className="lg:col-span-5">
           <FadeIn>
             <span className="bg-[#EBE9E4] text-brand-dark text-xs font-medium px-3 py-1.5 rounded-full uppercase tracking-wide mb-6 inline-block">
-              How we work
+              How Clawvio works
             </span>
             <h2 className="text-4xl md:text-5xl font-serif text-brand-dark mb-6 leading-tight">
-              Getting you results <br />
-              <span className="italic text-brand-text/50">without</span> the
-              complexity.
+              From request to outcome, <br />
+              <span className="italic text-brand-text/50">without losing context.</span>
             </h2>
             <p className="text-brand-text mb-8 max-w-md">
-              Our three-step process takes you from identifying opportunities to
-              launching systems, with clear communication and support at every
-              stage.
+              Your conversations become actions, and your actions become
+              reusable intelligence for future work.
             </p>
 
             <div className="flex flex-wrap gap-4">
@@ -53,13 +50,13 @@ const ProcessSection = () => {
                 href="/book-call"
                 className="bg-brand-dark text-white text-sm font-medium px-6 py-3 rounded-full hover:bg-black transition-transform hover:scale-105 active:scale-95 duration-300"
               >
-                Book a free call
+                Start with your workflow
               </Link>
               <button
                 className="bg-[#EBE9E4] text-brand-dark text-sm font-medium px-6 py-3 rounded-full hover:bg-[#E0DED9] transition-all hover:scale-105 active:scale-95 duration-300 flex items-center gap-2 group"
                 name="watch-video"
               >
-                Watch the video
+                Watch the flow
                 <span className="bg-brand-dark text-white rounded-full p-0.5 group-hover:bg-black transition-colors">
                   <Play size={8} fill="currentColor" className="ml-0.5" />
                 </span>
@@ -68,7 +65,6 @@ const ProcessSection = () => {
           </FadeIn>
         </div>
 
-        {/* Right Steps */}
         <div className="lg:col-span-7 flex flex-col gap-12 pt-8">
           {steps.map((step, idx) => (
             <FadeIn
@@ -101,4 +97,3 @@ const ProcessSection = () => {
 };
 
 export default ProcessSection;
-

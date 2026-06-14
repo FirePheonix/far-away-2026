@@ -6,58 +6,56 @@ const CaseStudySection = () => {
   return (
     <div className="py-24">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-        {/* Left Content */}
         <div className="lg:col-span-5">
           <FadeIn>
             <span className="bg-[#EBE9E4] text-brand-dark text-xs font-medium px-3 py-1.5 rounded-full uppercase tracking-wide mb-6 inline-block">
-              Case study
+              Knowledge base growth
             </span>
             <h2 className="text-4xl md:text-5xl font-serif text-brand-dark mb-6">
-              We help automate <br />
-              what matters{" "}
-              <span className="italic text-brand-text/50">most.</span>
+              Turn daily operations into <br />
+              compounding {" "}
+              <span className="italic text-brand-text/50">institutional memory.</span>
             </h2>
             <p className="text-brand-text mb-8 text-sm leading-relaxed">
-              Hamilton, a growing e-commerce business, was overwhelmed by
-              repetitive order processing and customer support tasks.
+              Clawvio captures what was requested, what was executed, and what
+              changed across your tools.
               <br />
               <br />
-              We analyzed their workflows, identified high-impact opportunities,
-              and built custom automation that integrated seamlessly with their
-              existing tools.
+              That means decisions are no longer buried in chat threads or
+              meetings. They stay searchable, reusable, and connected to outcomes.
               <br />
               <br />
-              Within 30 days, they saw measurable results.
+              The more your team uses Clawvio, the smarter your operating memory
+              becomes.
             </p>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-[#EBE9E4]/50 p-6 rounded-2xl">
                 <span className="block text-3xl font-serif text-brand-dark mb-1">
-                  50+
+                  3x
                 </span>
                 <span className="text-xs font-medium text-brand-text/70 uppercase tracking-wide block mb-1">
-                  Hours saved
+                  Faster context retrieval
                 </span>
                 <span className="text-[10px] text-brand-text/50">
-                  In the first month
+                  From past runs and outputs
                 </span>
               </div>
               <div className="bg-[#EBE9E4]/50 p-6 rounded-2xl">
                 <span className="block text-3xl font-serif text-brand-dark mb-1">
-                  40%
+                  100%
                 </span>
                 <span className="text-xs font-medium text-brand-text/70 uppercase tracking-wide block mb-1">
-                  Reduction
+                  Traceable execution
                 </span>
                 <span className="text-[10px] text-brand-text/50">
-                  In manual work
+                  Across connected apps
                 </span>
               </div>
             </div>
           </FadeIn>
         </div>
 
-        {/* Right Image */}
         <div className="lg:col-span-7">
           <FadeIn
             delay={0.2}
@@ -65,13 +63,12 @@ const CaseStudySection = () => {
           >
             <img
               src={assets.vercel.sections.case_study_hamilton}
-              alt="Hamilton Case Study"
+              alt="Knowledge Graph View"
               className="absolute inset-0 w-full h-full object-cover"
             />
-            {/* Logo Overlay */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-white text-3xl font-serif flex items-center gap-2">
-                <span className="text-4xl">*</span> Hamilton
+                <span className="text-4xl">*</span> Clawvio Memory
               </div>
             </div>
           </FadeIn>
@@ -82,4 +79,3 @@ const CaseStudySection = () => {
 };
 
 export default CaseStudySection;
-
