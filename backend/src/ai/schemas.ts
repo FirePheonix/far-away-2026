@@ -2,9 +2,11 @@ import { z } from "zod";
 
 export const toolNameSchema = z.enum([
   "sheets.search_sheet",
+  "sheets.search_all_sheets",
   "sheets.get_last_row",
   "sheets.get_row",
   "sheets.find_email",
+  "sheets.create_spreadsheet",
   "gmail.send_email",
   "gmail.search_email",
   "gmail.reply_email",
@@ -12,6 +14,9 @@ export const toolNameSchema = z.enum([
   "calendar.list_events",
   "calendar.find_free_slots",
   "meet.create_link",
+  "docs.create_document",
+  "docs.append_text",
+  "docs.insert_template",
 ]);
 
 export const plannedActionSchema = z.object({
@@ -39,6 +44,13 @@ export const sheetsSearchParamsSchema = z.object({
   spreadsheetId: z.string().optional(),
 });
 
+export const sheetsSearchAllParamsSchema = z.object({
+  query: z.string(),
+  maxSpreadsheets: z.number().int().positive().max(100).default(25),
+  maxSheetTabs: z.number().int().positive().max(50).default(10),
+  maxMatches: z.number().int().positive().max(200).default(50),
+});
+
 export const sheetsGetLastRowParamsSchema = z.object({
   sheetName: z.string(),
   spreadsheetId: z.string().optional(),
@@ -57,11 +69,25 @@ export const sheetsFindEmailParamsSchema = z.object({
   spreadsheetId: z.string().optional(),
 });
 
+export const sheetsCreateSpreadsheetParamsSchema = z.object({
+  title: z.string(),
+  sheetName: z.string().optional(),
+});
+
 export const sheetRowResultSchema = z.object({
   sheetName: z.string(),
   rowNumber: z.number(),
   values: z.array(z.string()),
   email: z.string().email().optional(),
+  spreadsheetId: z.string().optional(),
+  spreadsheetTitle: z.string().optional(),
+});
+
+export const spreadsheetCreateResultSchema = z.object({
+  spreadsheetId: z.string(),
+  title: z.string(),
+  spreadsheetUrl: z.string().url().optional(),
+  status: z.enum(["created", "mock"]),
 });
 
 // ── Gmail ───────────────────────────────────────────────────────────────────
@@ -167,6 +193,33 @@ export const meetCreateLinkParamsSchema = z.object({
 export const meetLinkResultSchema = z.object({
   meetLink: z.string().url(),
   status: z.enum(["created", "mock"]),
+});
+
+// —— Docs ————————————————————————————————————————————————————————————————————
+
+export const docsCreateDocumentParamsSchema = z.object({
+  title: z.string(),
+  initialText: z.string().optional(),
+});
+
+export const docsAppendTextParamsSchema = z.object({
+  documentId: z.string(),
+  text: z.string().min(1),
+});
+
+export const docsInsertTemplateParamsSchema = z.object({
+  documentId: z.string(),
+  template: z
+    .enum(["meeting_notes", "follow_up_email", "project_brief"])
+    .default("meeting_notes"),
+  replacements: z.record(z.string()).optional(),
+});
+
+export const docsOperationResultSchema = z.object({
+  documentId: z.string(),
+  title: z.string().optional(),
+  url: z.string().url().optional(),
+  status: z.enum(["created", "updated", "mock"]),
 });
 
 export const plannerResponseSchema = executionPlanSchema;

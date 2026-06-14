@@ -7,6 +7,16 @@ const TOOL_CATALOG = [
     params: { sheetName: "string", query: "string", spreadsheetId: "string (optional)" },
   },
   {
+    tool: "sheets.search_all_sheets",
+    description: "Search rows across all Google Sheets files available to the connected Google account",
+    params: {
+      query: "string",
+      maxSpreadsheets: "number (optional)",
+      maxSheetTabs: "number (optional)",
+      maxMatches: "number (optional)",
+    },
+  },
+  {
     tool: "sheets.get_last_row",
     description: "Get the last non-empty row from a Google Sheet",
     params: { sheetName: "string", spreadsheetId: "string (optional)" },
@@ -24,6 +34,14 @@ const TOOL_CATALOG = [
       rowNumber: "number (optional)",
       columnName: "string (optional)",
       spreadsheetId: "string (optional)",
+    },
+  },
+  {
+    tool: "sheets.create_spreadsheet",
+    description: "Create a new Google Spreadsheet",
+    params: {
+      title: "string",
+      sheetName: "string (optional)",
     },
   },
   {
@@ -83,6 +101,25 @@ const TOOL_CATALOG = [
     description: "Create a Google Meet link",
     params: { eventTitle: "string (optional)" },
   },
+  {
+    tool: "docs.create_document",
+    description: "Create a new Google Doc",
+    params: { title: "string", initialText: "string (optional)" },
+  },
+  {
+    tool: "docs.append_text",
+    description: "Append text to a Google Doc",
+    params: { documentId: "string", text: "string" },
+  },
+  {
+    tool: "docs.insert_template",
+    description: "Insert a predefined template into a Google Doc",
+    params: {
+      documentId: "string",
+      template: `"meeting_notes" | "follow_up_email" | "project_brief"`,
+      replacements: "object map (optional)",
+    },
+  },
 ] as const;
 
 export function buildPlannerSystemPrompt(): string {
@@ -112,7 +149,11 @@ RULES:
 5. Break complex requests into atomic tool calls in logical order.
 6. Prefer sheets.get_last_row when user mentions "last row" or "latest entry".
 7. Prefer sheets.find_email when you need an email from sheet data.
-8. Order matters: fetch data before sending emails or creating events.
+8. Prefer sheets.create_spreadsheet when user asks to create a new sheet/spreadsheet.
+9. Prefer sheets.search_all_sheets when user asks to search "all sheets", "all spreadsheets", or "my sheets".
+10. Prefer docs.create_document when user asks to create a doc/document.
+11. Use docs.append_text or docs.insert_template for adding content to docs.
+12. Order matters: fetch data before sending emails or creating events.
 
 AVAILABLE TOOLS:
 ${JSON.stringify(TOOL_CATALOG, null, 2)}
@@ -128,6 +169,12 @@ Valid tool names: ${toolNameSchema.options.join(", ")}`;
 }
 
 export const PLANNER_EXAMPLES = [
+  {
+    input: "Search all my sheets for abc entry",
+    output: {
+      actions: [{ tool: "sheets.search_all_sheets", params: { query: "abc" } }],
+    },
+  },
   {
     input: "Get the last row from Hackathon Winners and email the winner.",
     output: {

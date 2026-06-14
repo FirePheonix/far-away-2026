@@ -9,6 +9,7 @@ import type {
   ToolName,
 } from "../types/index.js";
 import { calendarTools } from "./calendar/calendar.tool.js";
+import { docsTools } from "./docs/docs.tool.js";
 import { gmailTools } from "./gmail/gmail.tool.js";
 import { meetTools } from "./meet/meet.tool.js";
 import { sheetsTools } from "./sheets/sheets.tool.js";
@@ -20,6 +21,7 @@ const allTools: AnyToolDefinition[] = [
   ...gmailTools,
   ...calendarTools,
   ...meetTools,
+  ...docsTools,
 ];
 
 export const toolRegistry = Object.fromEntries(
