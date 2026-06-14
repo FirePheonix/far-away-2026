@@ -49,7 +49,13 @@ const Navbar = () => {
       </div>
 
       {/* 3. CTA (Hidden on Mobile) */}
-      <div className="hidden md:block">
+      <div className="hidden md:flex items-center gap-3">
+        <Link
+          href="/sign-up"
+          className="border border-brand-dark/20 text-brand-dark text-sm font-medium px-5 py-2.5 rounded-full hover:border-brand-dark/40 hover:bg-brand-dark/5 transition-all duration-300"
+        >
+          Get started
+        </Link>
         <a
           href={downloadUrl}
           target="_blank"
