@@ -100,6 +100,7 @@ Output behavior:
 ## Build
 
 - Windows: `build_windows.bat` -> `dist\local-stt.exe`
+- Windows installer: `build_installer_windows.bat` -> `dist\installer\ClawvioSetup.exe`
 - macOS: `./build_mac.sh` -> `dist/local-stt-mac.zip`
 
 ## Privacy

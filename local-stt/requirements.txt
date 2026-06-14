@@ -1,13 +1,11 @@
 # local-stt dependencies
-# Install with:  pip install -r requirements.txt
+# Install with: pip install -r requirements.txt
 
-faster-whisper>=1.0.0      # STT engine (no PyTorch – much lighter than openai-whisper)
-sounddevice>=0.4.6         # microphone audio capture
-numpy>=1.24.0              # audio array processing
-customtkinter>=5.2.0       # overlay UI
-PyQt6>=6.6.0               # tray/overlay Qt UI
-Pillow>=10.0.0             # tray icon drawing
-pynput>=1.7.6              # global hotkeys (no admin/root required)
-pystray>=0.17.0            # system tray icon
-pyperclip>=1.8.2           # clipboard
-python-dotenv>=1.0.0       # load .env for assistant API URL
+faster-whisper>=1.0.0
+sounddevice>=0.4.6
+soundcard>=0.4.6
+numpy>=1.24.0
+PyQt6>=6.6.0
+pynput>=1.7.6
+pyperclip>=1.8.2
+python-dotenv>=1.0.0

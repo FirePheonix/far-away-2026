@@ -1,9 +1,12 @@
 import { z } from "zod";
 import {
+  spreadsheetCreateResultSchema,
   sheetRowResultSchema,
+  sheetsCreateSpreadsheetParamsSchema,
   sheetsFindEmailParamsSchema,
   sheetsGetLastRowParamsSchema,
   sheetsGetRowParamsSchema,
+  sheetsSearchAllParamsSchema,
   sheetsSearchParamsSchema,
 } from "../../ai/schemas.js";
 import type { ToolDefinition } from "../types.js";
@@ -13,9 +16,11 @@ import type { SheetRowResult } from "./sheets.service.js";
 export type { SheetRowResult };
 
 type SearchParams = z.output<typeof sheetsSearchParamsSchema>;
+type SearchAllParams = z.output<typeof sheetsSearchAllParamsSchema>;
 type GetLastRowParams = z.output<typeof sheetsGetLastRowParamsSchema>;
 type GetRowParams = z.output<typeof sheetsGetRowParamsSchema>;
 type FindEmailParams = z.output<typeof sheetsFindEmailParamsSchema>;
+type CreateSpreadsheetParams = z.output<typeof sheetsCreateSpreadsheetParamsSchema>;
 type FindEmailResult = { email: string; sheetName: string; rowNumber: number };
 
 export const sheetsSearchSheet: ToolDefinition<SearchParams, SheetRowResult[]> = {
@@ -74,9 +79,38 @@ export const sheetsFindEmail: ToolDefinition<FindEmailParams, FindEmailResult> =
     ),
 };
 
+export const sheetsSearchAllSheets: ToolDefinition<SearchAllParams, SheetRowResult[]> = {
+  name: "sheets.search_all_sheets",
+  description: "Search rows across all Google Sheets available to the connected account",
+  paramsSchema: sheetsSearchAllParamsSchema,
+  resultSchema: sheetRowResultSchema.array(),
+  execute: async (params, context) =>
+    sheetsService.searchAllSheets(
+      params.query,
+      params.maxSpreadsheets,
+      params.maxSheetTabs,
+      params.maxMatches,
+      context.user?.clerkUserId,
+    ),
+};
+
+export const sheetsCreateSpreadsheet: ToolDefinition<
+  CreateSpreadsheetParams,
+  z.output<typeof spreadsheetCreateResultSchema>
+> = {
+  name: "sheets.create_spreadsheet",
+  description: "Create a new Google Spreadsheet",
+  paramsSchema: sheetsCreateSpreadsheetParamsSchema,
+  resultSchema: spreadsheetCreateResultSchema,
+  execute: async (params, context) =>
+    sheetsService.createSpreadsheet(params.title, params.sheetName, context.user?.clerkUserId),
+};
+
 export const sheetsTools = [
   sheetsSearchSheet,
+  sheetsSearchAllSheets,
   sheetsGetLastRow,
   sheetsGetRow,
   sheetsFindEmail,
+  sheetsCreateSpreadsheet,
 ] as const;

@@ -4,6 +4,10 @@ import { Star, Play } from "lucide-react";
 import Link from "next/link";
 
 const IntroHeader = () => {
+  const downloadUrl =
+    process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL ??
+    "https://downloads.clawvio.ai/windows/ClawvioSetup-latest.exe";
+
   return (
     <div className="w-full flex flex-col items-center text-center pt-10 pb-12">
       {/* Rating */}
@@ -54,12 +58,14 @@ const IntroHeader = () => {
         transition={{ duration: 0.6, delay: 0.3 }}
         className="flex flex-col sm:flex-row items-center gap-4"
       >
-        <Link
-          href="/book-call"
+        <a
+          href={downloadUrl}
+          target="_blank"
+          rel="noreferrer"
           className="bg-brand-dark text-white text-sm font-medium px-8 py-3.5 rounded-full hover:bg-black transition-transform hover:scale-105 active:scale-95 duration-300"
         >
-          Book a free call
-        </Link>
+          Download for Windows
+        </a>
         <Link
           href="/about"
           className="bg-[#EBE9E4] text-brand-dark text-sm font-medium px-6 py-3.5 rounded-full hover:bg-[#E0DED9] transition-all hover:scale-105 active:scale-95 duration-300 flex items-center gap-2 group"

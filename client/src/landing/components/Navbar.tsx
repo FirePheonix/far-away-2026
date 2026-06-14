@@ -3,6 +3,10 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 
 const Navbar = () => {
+  const downloadUrl =
+    process.env.NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL ??
+    "https://downloads.clawvio.ai/windows/ClawvioSetup-latest.exe";
+
   return (
     <motion.nav
       initial={{ y: -20, opacity: 0 }}
@@ -46,12 +50,14 @@ const Navbar = () => {
 
       {/* 3. CTA (Hidden on Mobile) */}
       <div className="hidden md:block">
-        <Link
-          href="/book-call"
+        <a
+          href={downloadUrl}
+          target="_blank"
+          rel="noreferrer"
           className="bg-brand-primary text-white text-sm font-medium px-5 py-2.5 rounded-full hover:bg-black transition-all hover:scale-105 active:scale-95 duration-300"
         >
-          Book a free call
-        </Link>
+          Download for Windows
+        </a>
       </div>
     </motion.nav>
   );

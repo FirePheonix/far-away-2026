@@ -61,3 +61,32 @@ Press **Ctrl+Shift+Space** to record. Transcript is copied to clipboard and sent
 | Local STT | `local-stt/` | User's machine (not deployed) |
 
 Set `ASSISTANT_API_URL` in `local-stt/.env` to your production backend URL when not running locally.
+
+## Publish Windows installer (R2 / S3)
+
+Build installer:
+
+```bash
+cd local-stt
+build_installer_windows.bat
+```
+
+Upload to Cloudflare R2:
+
+```powershell
+cd local-stt\release
+.\upload-r2.ps1 -AccountId "<account-id>" -Bucket "<bucket>" -PublicBaseUrl "https://downloads.clawvio.ai" -Version "1.0.0"
+```
+
+Upload to AWS S3:
+
+```powershell
+cd local-stt\release
+.\upload-s3.ps1 -Bucket "<bucket>" -Region "us-east-1" -PublicBaseUrl "https://downloads.clawvio.ai" -Version "1.0.0"
+```
+
+Set client env for the website download button:
+
+```env
+NEXT_PUBLIC_WINDOWS_DOWNLOAD_URL=https://downloads.clawvio.ai/windows/ClawvioSetup-latest.exe
+```

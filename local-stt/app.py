@@ -14,8 +14,8 @@ import threading
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QPainter, QColor, QFont, QIcon, QAction
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF
+from PyQt6.QtGui import QPainter, QColor, QFont, QIcon, QAction, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QFrame, QSystemTrayIcon, QMenu
@@ -24,7 +24,6 @@ import numpy as np
 import pyperclip
 import soundcard as sc
 import sounddevice as sd
-from PIL import Image, ImageDraw
 from pynput import keyboard as pynput_kb
 from faster_whisper import WhisperModel
 
@@ -45,20 +44,17 @@ _CARD_H_R = 290
 
 
 def _make_qicon(size=64, color="#1BB9CE") -> QIcon:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = size
-    d.rounded_rectangle([s*.30, s*.04, s*.70, s*.58], radius=s*.18, fill=color)
-    d.arc([s*.14, s*.36, s*.86, s*.76], start=0, end=180, fill=color, width=max(3, int(s*.06)))
-    cx = s // 2
-    d.rectangle([cx - s*.04, s*.74, cx + s*.04, s*.88], fill=color)
-    d.rectangle([s*.30, s*.86, s*.70, s*.94], fill=color)
-    from PyQt6.QtGui import QPixmap
-    import io
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    px = QPixmap()
-    px.loadFromData(buf.getvalue())
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    s = float(size)
+    p.drawRoundedRect(QRectF(s * 0.30, s * 0.04, s * 0.40, s * 0.54), s * 0.18, s * 0.18)
+    p.drawRect(int(s * 0.46), int(s * 0.74), int(s * 0.08), int(s * 0.14))
+    p.drawRoundedRect(QRectF(s * 0.30, s * 0.86, s * 0.40, s * 0.08), s * 0.04, s * 0.04)
+    p.end()
     return QIcon(px)
 
 

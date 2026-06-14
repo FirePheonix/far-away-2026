@@ -5,6 +5,8 @@ import { decryptSecret, encryptSecret } from "../utils/crypto.js";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/documents",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
@@ -14,6 +16,8 @@ const SCOPES = [
 
 export type GoogleClients = {
   sheets: ReturnType<typeof google.sheets>;
+  drive: ReturnType<typeof google.drive>;
+  docs: ReturnType<typeof google.docs>;
   gmail: ReturnType<typeof google.gmail>;
   calendar: ReturnType<typeof google.calendar>;
   auth: unknown;
@@ -107,6 +111,8 @@ export async function getGoogleClients(clerkUserId?: string): Promise<GoogleClie
     if (userAuth) {
       return {
         sheets: google.sheets({ version: "v4", auth: userAuth }),
+        drive: google.drive({ version: "v3", auth: userAuth }),
+        docs: google.docs({ version: "v1", auth: userAuth }),
         gmail: google.gmail({ version: "v1", auth: userAuth }),
         calendar: google.calendar({ version: "v3", auth: userAuth }),
         auth: userAuth,
@@ -122,6 +128,8 @@ export async function getGoogleClients(clerkUserId?: string): Promise<GoogleClie
   if (!auth) {
     cachedClients = {
       sheets: google.sheets({ version: "v4" }),
+      drive: google.drive({ version: "v3" }),
+      docs: google.docs({ version: "v1" }),
       gmail: google.gmail({ version: "v1" }),
       calendar: google.calendar({ version: "v3" }),
       auth: null,
@@ -132,6 +140,8 @@ export async function getGoogleClients(clerkUserId?: string): Promise<GoogleClie
   if (auth instanceof google.auth.JWT) {
     cachedClients = {
       sheets: google.sheets({ version: "v4", auth }),
+      drive: google.drive({ version: "v3", auth }),
+      docs: google.docs({ version: "v1", auth }),
       gmail: google.gmail({ version: "v1", auth }),
       calendar: google.calendar({ version: "v3", auth }),
       auth,
@@ -144,6 +154,8 @@ export async function getGoogleClients(clerkUserId?: string): Promise<GoogleClie
 
   cachedClients = {
     sheets: google.sheets({ version: "v4", auth: jwt }),
+    drive: google.drive({ version: "v3", auth: jwt }),
+    docs: google.docs({ version: "v1", auth: jwt }),
     gmail: google.gmail({ version: "v1", auth: jwt }),
     calendar: google.calendar({ version: "v3", auth: jwt }),
     auth: jwt,
