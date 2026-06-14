@@ -24,14 +24,14 @@ const ContactSection = () => {
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
 
           <div className="relative z-10 text-white">
-            <div className="flex items-center gap-1 mb-4">
+            {/* <div className="flex items-center gap-1 mb-4">
               {[1, 2, 3, 4, 5].map((s) => (
                 <Star key={s} size={12} fill="white" className="text-white" />
               ))}
               <span className="text-xs ml-2 opacity-80">
                 Helped over 100+ businesses
               </span>
-            </div>
+            </div> */}
 
             <h2 className="text-4xl font-serif mb-4 leading-tight">
               Turn confusion into clarity, today.

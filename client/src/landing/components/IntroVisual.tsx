@@ -48,7 +48,7 @@ const IntroVisual = () => {
         </div>
       </motion.div>
 
-      <IntroLogos />
+      {/* <IntroLogos /> */}
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}

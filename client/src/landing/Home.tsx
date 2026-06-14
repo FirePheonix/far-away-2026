@@ -47,10 +47,10 @@ const Home = () => {
       <section className={`${containerClass} pb-20`}>
         <Hero />
       </section>
-      
+{/*       
       <section className={`${containerClass} mb-32`}>
         <HiringBanner />
-      </section>
+      </section> */}
       
       <section className={`${containerClass} mb-20`}>
         <Services />
@@ -60,9 +60,9 @@ const Home = () => {
         <Testimonial />
       </section>
       
-      <section className={`${containerClass} pb-20`}>
+      {/* <section className={`${containerClass} pb-20`}>
         <FooterLogos />
-      </section>
+      </section> */}
 
       {/* --- EXTENDED SECTIONS --- */}
 

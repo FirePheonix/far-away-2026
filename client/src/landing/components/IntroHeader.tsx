@@ -13,7 +13,7 @@ const IntroHeader = () => {
         transition={{ duration: 0.6 }}
         className="flex flex-col items-center gap-2 mb-8"
       >
-        <div className="flex items-center gap-1">
+        {/* <div className="flex items-center gap-1">
           {[1, 2, 3, 4, 5].map((star) => (
             <Star
               key={star}
@@ -24,7 +24,7 @@ const IntroHeader = () => {
         </div>
         <span className="text-xs font-medium text-brand-text/80 tracking-wide">
           Helped over 100+ businesses
-        </span>
+        </span> */}
       </motion.div>
 
       {/* Headline */}
