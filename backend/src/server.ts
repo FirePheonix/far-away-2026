@@ -12,7 +12,8 @@ import { inngestFunctions } from "./workflows/assistant.workflow.js";
 export function createApp() {
   const app = express();
 
-  app.use(cors({ origin: env.CORS_ORIGIN }));
+  const corsOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+  app.use(cors({ origin: corsOrigins }));
   app.use(express.json());
 
   app.use("/api", assistantRouter);
