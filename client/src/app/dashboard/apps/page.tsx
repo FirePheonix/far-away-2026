@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import { DashboardShell } from "../dashboard-shell";
 
 export default function DashboardAppsPage() {
-  return <DashboardShell view="apps" />;
+  return (
+    <Suspense fallback={null}>
+      <DashboardShell view="apps" />
+    </Suspense>
+  );
 }
