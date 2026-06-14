@@ -29,6 +29,15 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# local validation screenshots
+image.png
+image-*.png
+
+# local-only folders not tracked in main repo
+landing/
+shadcn-admin/
+supabase/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
