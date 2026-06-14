@@ -141,6 +141,19 @@ function providerForApp(appId: string): "google" | "slack" | "github" | "notion"
   return "notion";
 }
 
+function urlForApp(appId: string): string | null {
+  switch (appId) {
+    case "google_sheets": return "https://docs.google.com/spreadsheets/";
+    case "gmail": return "https://mail.google.com/";
+    case "google_calendar": return "https://calendar.google.com/";
+    case "google_meet": return "https://meet.google.com/";
+    case "slack": return "https://app.slack.com/";
+    case "github": return "https://github.com/";
+    case "notion": return "https://notion.so/";
+    default: return null;
+  }
+}
+
 export function DashboardShell({ view }: { view: DashboardView }) {
   const { getToken, userId, isLoaded } = useAuth();
   const { user } = useUser();
@@ -413,7 +426,11 @@ export function DashboardShell({ view }: { view: DashboardView }) {
                   return (
                     <div
                       key={app.id}
-                      className="rounded-lg border border-brand-dark/10 bg-white p-4"
+                      onClick={() => {
+                        const url = urlForApp(app.id);
+                        if (url) window.open(url, "_blank");
+                      }}
+                      className="group rounded-lg border border-brand-dark/10 bg-white p-4 cursor-pointer hover:border-brand-dark/30 hover:shadow-sm transition-all"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="h-10 w-10 rounded-md bg-[#ebe9e4] flex items-center justify-center">
@@ -438,7 +455,10 @@ export function DashboardShell({ view }: { view: DashboardView }) {
                       </div>
                       <button
                         type="button"
-                        onClick={() => connectApp(provider)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          connectApp(provider);
+                        }}
                         disabled={isBusy}
                         className={[
                           "mt-4 h-9 w-full rounded-md border px-3 text-sm font-semibold transition disabled:opacity-60",
