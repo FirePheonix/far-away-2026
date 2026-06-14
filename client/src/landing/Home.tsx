@@ -78,9 +78,9 @@ const Home = () => {
         <CaseStudySection />
       </section>
 
-      <section className={containerClass}>
+      {/* <section className={containerClass}>
         <TeamSection />
-      </section>
+      </section> */}
 
       <section id="faq" className={containerClass}>
         <FAQSection />
