@@ -34,6 +34,11 @@ pyinstaller \
   app.py
 
 echo ""
+echo "[local-stt] Fixing macOS Info.plist (Permissions & Background Mode)..."
+plutil -insert LSUIElement -bool YES dist/local-stt.app/Contents/Info.plist || true
+plutil -insert NSMicrophoneUsageDescription -string "Clawvio needs microphone access to transcribe your speech." dist/local-stt.app/Contents/Info.plist || true
+
+echo ""
 echo "[local-stt] Packaging into .zip for distribution..."
 cd dist
 zip -r local-stt-mac.zip local-stt.app

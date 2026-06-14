@@ -135,7 +135,9 @@ class AudioVisualizer(QWidget):
         for i in range(5):
             x = 2 + i * 8
             if self.mode == "listening":
-                rms_val = min(1.0, self.rms * 6.0)
+                # Use a logarithmic scale for RMS so quiet sounds (e.g. Mac mics) still move the visualizer
+                db = 20 * math.log10(max(1e-5, self.rms))
+                rms_val = max(0.0, min(1.0, (db + 40) / 30.0))
                 p = max(0.0, min(1.0, rms_val + (i - 2) * 0.08 + random.uniform(-0.04, 0.04)))
                 h = int(6 + p * 26)
             elif self.mode == "processing":
@@ -255,6 +257,8 @@ class FloatingOverlay(QWidget):
         self.status_lbl.setStyleSheet(f"color: {_TEXT};")
         self.visualizer.set_mode("listening", _RED)
         self.show()
+        self.raise_()
+        self.activateWindow()
         self._fade_to(0.95)
 
     def show_processing(self):
@@ -267,6 +271,8 @@ class FloatingOverlay(QWidget):
         self.visualizer.set_mode("processing", _ACCENT)
         self.visualizer.phase = 0.0
         self.show()
+        self.raise_()
+        self.activateWindow()
         self._fade_to(0.95)
 
     def show_result(self, text: str, ok: bool = True):
@@ -280,6 +286,9 @@ class FloatingOverlay(QWidget):
         self.result_box.setPlainText(text)
         self.res_widget.show()
         self._position(_CARD_H_R)
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def show_assistant_toast(self, title: str, message: str, ok: bool = True):
         self._state = "result"
@@ -373,7 +382,9 @@ class LocalSTT(QObject):
 
     def _load_model(self):
         print("[local-stt] loading model…")
-        self._model = WhisperModel("small", device="cpu", compute_type="int8")
+        # int8 compute type on Apple Silicon causes bad transcriptions, so we use float32 on macOS
+        c_type = "float32" if SYS == "Darwin" else "int8"
+        self._model = WhisperModel("small", device="cpu", compute_type=c_type)
         self._model_ready.set()
         print("[local-stt] model ready")
         self._tray_update_tooltip("local-stt  ·  ready")
@@ -422,7 +433,7 @@ class LocalSTT(QObject):
 
     def _start_hotkey_listener(self):
         def _tag(key):
-            if key in (pynput_kb.Key.ctrl_l, pynput_kb.Key.ctrl_r, pynput_kb.Key.ctrl): return "ctrl"
+            if key in (pynput_kb.Key.ctrl_l, pynput_kb.Key.ctrl_r, pynput_kb.Key.ctrl, pynput_kb.Key.cmd, pynput_kb.Key.cmd_l, pynput_kb.Key.cmd_r): return "ctrl"
             if key in (pynput_kb.Key.shift, pynput_kb.Key.shift_l, pynput_kb.Key.shift_r): return "shift"
             if key == pynput_kb.Key.space: return "space"
             return None
@@ -430,7 +441,9 @@ class LocalSTT(QObject):
         def on_press(key):
             tag = _tag(key)
             if tag: self._pressed.add(tag)
+            # print(f"[debug] pressed: {key}, current pressed tags: {self._pressed}")
             if self._pressed >= self._HOTKEY and not self._hotkey_fired:
+                print("[local-stt] Hotkey detected! Toggling recording...")
                 self._hotkey_fired = True
                 QTimer.singleShot(0, self._toggle)
 
@@ -445,6 +458,7 @@ class LocalSTT(QObject):
         listener.start()
 
     def _toggle(self):
+        print(f"[local-stt] _toggle called! Currently recording: {self._recording}")
         with self._lock:
             if not self._recording:
                 self._begin_recording()
@@ -577,7 +591,8 @@ class LocalSTT(QObject):
                     beam_size=1,
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500),
-                    word_timestamps=True
+                    word_timestamps=True,
+                    initial_prompt="shivanshumangal007@gmail.com, shivanshumangal, @gmail.com, dot, at."
                 )
 
                 # Word-level splitting: even when the VAD merges two
