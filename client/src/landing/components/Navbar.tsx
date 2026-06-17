@@ -44,7 +44,7 @@ const Navbar = () => {
           href="/"
           className="text-xl sm:text-2xl md:text-4xl font-serif tracking-tight text-brand-dark"
         >
-          clawvio
+          Clawvio
         </Link>
       </div>
 

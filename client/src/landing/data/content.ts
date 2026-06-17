@@ -92,7 +92,7 @@ export const newsItems: NewsItem[] = [
   },
   {
     id: "jane-expansion",
-    title: "clawvio Expands to Europe",
+    title: "Clawvio Expands to Europe",
     category: "Company News",
     date: "February 28, 2025",
     description:
@@ -114,7 +114,7 @@ export const newsItems: NewsItem[] = [
     category: "Milestones",
     date: "December 05, 2024",
     description:
-      "clawvio raises $15M to accelerate the development of our proprietary AI integration platform.",
+      "Clawvio raises $15M to accelerate the development of our proprietary AI integration platform.",
     image: assets.unsplash.news.series_a_funding,
   },
 ];

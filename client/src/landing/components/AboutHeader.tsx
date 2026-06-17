@@ -9,10 +9,10 @@ const AboutHeader = () => {
           Our Story
         </span>
         <h1 className="text-5xl md:text-7xl lg:text-[6rem] leading-[1.1] font-serif text-brand-dark tracking-tight mb-8">
-          We are <span className="italic text-brand-text/40">clawvio.</span>
+          We are <span className="italic text-brand-text/40">Clawvio.</span>
         </h1>
         <p className="text-lg md:text-xl text-brand-text/80 max-w-2xl mx-auto leading-relaxed">
-          We believe that AI shouldn't be complicated. We started clawvio to help
+          We believe that AI shouldn't be complicated. We started Clawvio to help
           businesses bridge the gap between complex technology and real-world
           results.
         </p>

@@ -27,7 +27,7 @@ const Footer = () => {
       <div className="max-w-[1400px] mx-auto px-4 md:px-8">
         <div className="flex flex-col items-center mb-20 text-center">
           <h2 className="text-4xl md:text-5xl font-serif text-brand-dark mb-4">
-            clawvio
+            Clawvio
           </h2>
           <p className="text-brand-text/60 text-sm mb-12">
             Helping you automate what matters.
@@ -50,7 +50,7 @@ const Footer = () => {
           <div className="w-48 h-48 md:w-64 md:h-64 relative">
             <img
               src={assets.vercel.visuals.decorative_flower}
-              alt="clawvio Flower"
+              alt="Clawvio Flower"
               className="w-full h-full object-cover rounded-full mix-blend-multiply opacity-80"
             />
           </div>
@@ -169,7 +169,7 @@ const Footer = () => {
         </div>
 
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] text-brand-text/40 uppercase tracking-wide">
-          <span>&copy; {currentYear} clawvio AI. All rights reserved.</span>
+          <span>&copy; {currentYear} Clawvio AI. All rights reserved.</span>
           <span>Created by Dualite</span>
         </div>
       </div>

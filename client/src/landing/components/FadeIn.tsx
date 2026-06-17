@@ -1,3 +1,5 @@
+"use client";
+
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import React from "react";
 import { motion } from "framer-motion";
