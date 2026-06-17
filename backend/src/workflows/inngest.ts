@@ -8,4 +8,5 @@ export const inngest = new Inngest({
 
 export const ASSISTANT_EVENTS = {
   voiceRequestReceived: "assistant/voice_request_received",
+  userInputReceived: "assistant/user_input_received",
 } as const;

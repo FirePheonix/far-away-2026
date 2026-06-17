@@ -82,6 +82,13 @@ export function resolveActionParams(
     delete resolved.fromStep;
   }
 
+  if (resolved.spreadsheetIdFromPreviousStep === true) {
+    if (last && typeof last === "object" && "spreadsheetId" in last) {
+      resolved.spreadsheetId = last.spreadsheetId;
+    }
+    delete resolved.spreadsheetIdFromPreviousStep;
+  }
+
   return resolved;
 }
 
@@ -90,6 +97,17 @@ function extractEmail(value: unknown): string | undefined {
   const obj = value as Record<string, unknown>;
   if (typeof obj.email === "string") return obj.email;
   if (typeof obj.to === "string") return obj.to;
+  
+  if (typeof obj.userInput === "object" && obj.userInput) {
+    for (const v of Object.values(obj.userInput)) {
+      if (typeof v === "string" && v.includes("@")) return v;
+    }
+  }
+
+  for (const v of Object.values(obj)) {
+    if (typeof v === "string" && v.includes("@")) return v;
+  }
+
   if (Array.isArray(obj.values)) {
     const flat = obj.values.flat() as unknown[];
     const found = flat.find((v) => typeof v === "string" && v.includes("@"));

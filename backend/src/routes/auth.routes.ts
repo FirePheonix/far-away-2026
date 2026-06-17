@@ -6,6 +6,7 @@ import {
   googleOAuthCallback,
   startIntegrationOAuth,
   startGoogleOAuth,
+  integrationOAuthCallback,
 } from "../controllers/auth.controller.js";
 import { requireClerkAuth } from "../middleware/auth.js";
 
@@ -17,3 +18,4 @@ authRouter.get("/auth/:provider/start", requireClerkAuth, startIntegrationOAuth)
 authRouter.get("/auth/google/status", requireClerkAuth, getGoogleConnectionStatus);
 authRouter.get("/auth/google/start", requireClerkAuth, startGoogleOAuth);
 authRouter.get("/auth/google/callback", googleOAuthCallback);
+authRouter.get("/auth/:provider/callback", integrationOAuthCallback);

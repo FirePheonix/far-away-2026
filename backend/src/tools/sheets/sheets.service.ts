@@ -345,3 +345,50 @@ export async function createSpreadsheet(
     status: "created",
   };
 }
+
+export async function appendRow(
+  sheetName: string,
+  values: string[],
+  spreadsheetIdOverride?: string,
+  clerkUserId?: string,
+): Promise<SheetRowResult> {
+  if (env.GOOGLE_MOCK_MODE || (!clerkUserId && !isGoogleConfigured())) {
+    return {
+      sheetName,
+      rowNumber: 99,
+      values,
+      email: values.find((v) => v.includes("@")),
+    };
+  }
+
+  const id = requireSpreadsheetId(spreadsheetIdOverride);
+  const { sheets, auth } = await getGoogleClients(clerkUserId);
+  if (!auth) {
+    throw new Error("No Google authorization found for spreadsheet append");
+  }
+
+  let response;
+  try {
+    response = await sheets.spreadsheets.values.append({
+      spreadsheetId: id,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [values],
+      },
+    });
+  } catch (err) {
+    formatGoogleError(err, `append row to sheet "${sheetName}"`);
+  }
+
+  const updatedRange = response.data.updates?.updatedRange ?? "";
+  const rowMatch = updatedRange.match(/!.*?[A-Z]+(\d+)$/);
+  const rowNumber = rowMatch ? parseInt(rowMatch[1]!, 10) : 0;
+
+  return {
+    sheetName,
+    rowNumber,
+    values,
+    email: values.find((v) => v.includes("@")),
+  };
+}

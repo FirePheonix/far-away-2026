@@ -47,7 +47,14 @@ export const assistantWorkflow = inngest.createFunction(
           }
 
           const started = Date.now();
-          const result = await executeAction(action, context, i);
+          let result;
+          try {
+            result = await executeAction(action, context, i);
+          } catch (err) {
+            console.error(`Error executing tool ${action.tool}:`, err);
+            result = { error: err instanceof Error ? err.message : String(err) };
+          }
+          
           return {
             index: i,
             tool: action.tool,
@@ -56,6 +63,20 @@ export const assistantWorkflow = inngest.createFunction(
             durationMs: Date.now() - started,
           } satisfies StepExecutionRecord;
         });
+
+        if (action.tool === "request_user_input" && !stepResult.result?.error && stepResult.result?.taskId) {
+          const inputEvent = await step.waitForEvent(`wait-for-user-input-${i}`, {
+            event: ASSISTANT_EVENTS.userInputReceived,
+            timeout: "24h",
+            match: "data.requestId",
+          });
+          
+          if (inputEvent) {
+            stepResult.result.userInput = inputEvent.data.payload;
+          } else {
+            stepResult.result.error = "User input timeout";
+          }
+        }
 
         stepsExecuted.push(stepResult);
       }
@@ -130,7 +151,14 @@ export async function runAssistantPipeline(
     for (let i = 0; i < plan.actions.length; i++) {
       const action = plan.actions[i]!;
       const started = Date.now();
-      const result = await executeAction(action, context, i);
+      
+      let result;
+      try {
+        result = await executeAction(action, context, i);
+      } catch (err) {
+        console.error(`Error executing tool ${action.tool}:`, err);
+        result = { error: err instanceof Error ? err.message : String(err) };
+      }
 
       stepsExecuted.push({
         index: i,
