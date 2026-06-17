@@ -34,7 +34,7 @@ image.png
 image-*.png
 
 # local-only folders not tracked in main repo
-landing/
+/landing/
 shadcn-admin/
 supabase/
 
