@@ -115,7 +115,7 @@ export async function createPlan(transcript: string): Promise<ExecutionPlanInput
     ],
   });
 
-  const content = response.choices[0]?.message?.content;
+  const content = response.choices[0]?.message?.content ?? "";
   if (!content) {
     throw new PlannerError("Planner returned empty response");
   }
@@ -128,12 +128,12 @@ export async function createPlan(transcript: string): Promise<ExecutionPlanInput
   }
 
   const result = executionPlanSchema.safeParse(parsed);
-  if (!result.success) {
+  if (!result.success || !result.data) {
     throw new PlannerError("Planner output failed schema validation", {
-      errors: result.error.flatten(),
+      errors: result.error?.flatten(),
       raw: parsed,
     });
   }
 
-  return result.data;
+  return result.data as ExecutionPlanInput;
 }

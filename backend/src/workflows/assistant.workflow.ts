@@ -64,7 +64,12 @@ export const assistantWorkflow = inngest.createFunction(
           } satisfies StepExecutionRecord;
         });
 
-        if (action.tool === "request_user_input" && !stepResult.result?.error && stepResult.result?.taskId) {
+        const stepOutput =
+          typeof stepResult.result === "object" && stepResult.result !== null
+            ? (stepResult.result as Record<string, unknown>)
+            : null;
+
+        if (action.tool === "request_user_input" && !stepOutput?.error && stepOutput?.taskId) {
           const inputEvent = await step.waitForEvent(`wait-for-user-input-${i}`, {
             event: ASSISTANT_EVENTS.userInputReceived,
             timeout: "24h",
@@ -72,9 +77,9 @@ export const assistantWorkflow = inngest.createFunction(
           });
           
           if (inputEvent) {
-            stepResult.result.userInput = inputEvent.data.payload;
+            stepOutput.userInput = inputEvent.data.payload;
           } else {
-            stepResult.result.error = "User input timeout";
+            stepOutput.error = "User input timeout";
           }
         }
 
