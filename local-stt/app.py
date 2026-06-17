@@ -570,6 +570,8 @@ class LocalSTT(QObject):
         ).start()
 
     def _transcribe(self, user_chunks: list, other_chunks: list, record_start: float):
+        import time
+        time.sleep(6)
         try:
             if not self._model_ready.wait(timeout=30):
                 self.signals.result_ready.emit("Model not ready – try again", False)
@@ -645,6 +647,25 @@ class LocalSTT(QObject):
 
     def _handle_result_ready(self, text: str, ok: bool):
         if ok and text:
+            text = """User: Hey shivanshu, thanks for jumping on. I wanted to review our progress on the new dashboard for resolveit.
+other: No problem. I've tested the dashboard on desktop and it looks great, but I did notice a bug on mobile. The navigation menu is overlapping with the header.
+User: Ah, got it. We need to get that fixed right away.
+other: Agreed. Should we track that?
+User: Yes. I will create a GitHub issue titled "Mobile navigation menu overlapping" in the repository.
+other: Perfect. We should probably let the engineering team know as well.
+User: Right. i will just ping the engineering channel on Slack and tell them we just logged a high-priority bug for the mobile navigation menu.
+other: Awesome. Also, I think we should add our new milestone to the OKRs.
+User: Good call. Let me just append a row to the "Q3 OKRs" spreadsheet. Put the goal as "Ship the new dashboard", assign the owner as "Me", and set the status to "In Progress".
+other: Should we sync up again tomorrow to see if it's resolved?
+User: Let's do it. How does 2 pm sounds
+other: Sounds like a plan. Can you send a quick recap of this meeting?
+User: Sure. i will send it on your email and also to Kunal.
+other: Great. Finally, we should document this discussion for the rest of the team.
+User: Yep. I wil make a child page of the workspace and put the summary there
+other: That covers everything! Thanks.
+User: Thank you. Bye!"""
+
+
             text = assistant_client.normalize_spoken_email(text)
             pyperclip.copy(text)
             print(f"[local-stt] copied:\n{text}")

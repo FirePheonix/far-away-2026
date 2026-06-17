@@ -7,6 +7,7 @@ export const toolNameSchema = z.enum([
   "sheets.get_row",
   "sheets.find_email",
   "sheets.create_spreadsheet",
+  "sheets.append_row",
   "gmail.send_email",
   "gmail.search_email",
   "gmail.reply_email",
@@ -17,6 +18,10 @@ export const toolNameSchema = z.enum([
   "docs.create_document",
   "docs.append_text",
   "docs.insert_template",
+  "slack_send_message",
+  "github_create_issue",
+  "notion_create_page",
+  "request_user_input"
 ]);
 
 export const plannedActionSchema = z.object({
@@ -72,6 +77,12 @@ export const sheetsFindEmailParamsSchema = z.object({
 export const sheetsCreateSpreadsheetParamsSchema = z.object({
   title: z.string(),
   sheetName: z.string().optional(),
+});
+
+export const sheetsAppendRowParamsSchema = z.object({
+  sheetName: z.string(),
+  values: z.array(z.string()),
+  spreadsheetId: z.string().optional(),
 });
 
 export const sheetRowResultSchema = z.object({

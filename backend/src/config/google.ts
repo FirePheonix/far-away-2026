@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import { env } from "./env.js";
-import { supabaseAdmin } from "./supabase.js";
+import { db } from "./db.js";
 import { decryptSecret, encryptSecret } from "../utils/crypto.js";
 
 const SCOPES = [
@@ -55,25 +55,30 @@ export function isGoogleConfigured(): boolean {
 async function buildUserOAuthClient(clerkUserId: string) {
   if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) return null;
 
-  const { data: connection, error: connectionError } = await supabaseAdmin
-    .from("google_connections")
-    .select("id")
-    .eq("clerk_user_id", clerkUserId)
-    .is("revoked_at", null)
-    .order("connected_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (connectionError) throw connectionError;
+  let connection;
+  try {
+    connection = db.prepare(`
+      SELECT id FROM google_connections 
+      WHERE clerk_user_id = ? AND revoked_at IS NULL 
+      ORDER BY connected_at DESC LIMIT 1
+    `).get(clerkUserId) as any;
+  } catch (error) {
+    throw error;
+  }
+  
   if (!connection?.id) return null;
 
-  const { data: token, error: tokenError } = await supabaseAdmin
-    .from("google_tokens")
-    .select("access_token_enc, refresh_token_enc, expires_at")
-    .eq("connection_id", connection.id)
-    .maybeSingle();
-
-  if (tokenError) throw tokenError;
+  let token;
+  try {
+    token = db.prepare(`
+      SELECT access_token_enc, refresh_token_enc, expires_at 
+      FROM google_tokens 
+      WHERE connection_id = ?
+    `).get(connection.id) as any;
+  } catch (error) {
+    throw error;
+  }
+  
   if (!token?.access_token_enc) return null;
 
   const oauth2 = new google.auth.OAuth2(
@@ -88,18 +93,23 @@ async function buildUserOAuthClient(clerkUserId: string) {
     expiry_date: token.expires_at ? new Date(token.expires_at).getTime() : undefined,
   });
 
-  oauth2.on("tokens", async (tokens) => {
+  oauth2.on("tokens", (tokens) => {
     const update: Record<string, string | null> = {};
     if (tokens.access_token) update.access_token_enc = encryptSecret(tokens.access_token);
     if (tokens.refresh_token) update.refresh_token_enc = encryptSecret(tokens.refresh_token);
     if (tokens.expiry_date) update.expires_at = new Date(tokens.expiry_date).toISOString();
     if (Object.keys(update).length === 0) return;
 
-    const { error } = await supabaseAdmin
-      .from("google_tokens")
-      .update(update)
-      .eq("connection_id", connection.id);
-    if (error) console.error("[Google] Failed to persist refreshed token", error);
+    try {
+      const keys = Object.keys(update);
+      const setClause = keys.map(k => `${k} = @${k}`).join(", ");
+      db.prepare(`UPDATE google_tokens SET ${setClause} WHERE connection_id = @connectionId`).run({
+        ...update,
+        connectionId: connection.id
+      });
+    } catch (error) {
+      console.error("[Google] Failed to persist refreshed token", error);
+    }
   });
 
   return oauth2;

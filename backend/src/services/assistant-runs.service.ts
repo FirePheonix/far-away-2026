@@ -1,12 +1,13 @@
-import { supabaseAdmin } from "../config/supabase.js";
+import { db } from "../config/db.js";
 import { env } from "../config/env.js";
 import OpenAI from "openai";
+import { randomUUID } from "node:crypto";
 import type { ExecutionPlan, StepExecutionRecord } from "../types/index.js";
 
 type AssistantSource = "api" | "voice" | "local-stt" | "web";
 
 function toJson(value: unknown): unknown {
-  return value === undefined ? null : JSON.parse(JSON.stringify(value));
+  return value === undefined ? null : JSON.stringify(value);
 }
 
 const openai = new OpenAI({
@@ -14,11 +15,15 @@ const openai = new OpenAI({
 });
 
 export async function ensureAssistantProfile(clerkUserId: string): Promise<void> {
-  const { error } = await supabaseAdmin.from("profiles").upsert(
-    { clerk_user_id: clerkUserId },
-    { onConflict: "clerk_user_id" },
-  );
-  if (error) throw error;
+  try {
+    db.prepare(`
+      INSERT INTO profiles (clerk_user_id)
+      VALUES (?)
+      ON CONFLICT(clerk_user_id) DO NOTHING
+    `).run(clerkUserId);
+  } catch (error) {
+    throw error;
+  }
 }
 
 export async function createAssistantRequest(params: {
@@ -29,46 +34,36 @@ export async function createAssistantRequest(params: {
 }): Promise<string> {
   await ensureAssistantProfile(params.clerkUserId);
 
-  const { data, error } = await supabaseAdmin
-    .from("assistant_requests")
-    .insert({
-      clerk_user_id: params.clerkUserId,
-      transcript: params.transcript,
-      source: params.source,
-      async: params.async,
-      status: "queued",
-    })
-    .select("id")
-    .single();
+  const requestId = randomUUID();
 
-  if (error || !data?.id) throw error ?? new Error("Assistant request insert returned no id");
+  db.prepare(`
+    INSERT INTO assistant_requests (id, clerk_user_id, transcript, status)
+    VALUES (?, ?, ?, ?)
+  `).run(requestId, params.clerkUserId, params.transcript, "queued");
 
-  await rememberTranscript(params.clerkUserId, params.transcript, data.id);
+  await rememberTranscript(params.clerkUserId, params.transcript, requestId);
   await rememberContactsFromTranscript(params.clerkUserId, params.transcript);
 
-  return data.id;
+  return requestId;
 }
 
 export async function startAssistantRun(requestId?: string): Promise<string | undefined> {
   if (!requestId) return undefined;
 
-  await supabaseAdmin
-    .from("assistant_requests")
-    .update({ status: "running" })
-    .eq("id", requestId);
+  try {
+    db.prepare(`UPDATE assistant_requests SET status = 'running' WHERE id = ?`).run(requestId);
 
-  const { data, error } = await supabaseAdmin
-    .from("assistant_runs")
-    .insert({ request_id: requestId, success: null, message: "Running" })
-    .select("id")
-    .single();
+    const runId = randomUUID();
+    db.prepare(`
+      INSERT INTO assistant_runs (id, request_id, success, message)
+      VALUES (?, ?, ?, ?)
+    `).run(runId, requestId, null, "Running");
 
-  if (error) {
+    return runId;
+  } catch (error) {
     console.error("[AssistantRuns] Failed to start run", error);
     return undefined;
   }
-
-  return data.id;
 }
 
 export async function completeAssistantRun(params: {
@@ -83,42 +78,54 @@ export async function completeAssistantRun(params: {
 }): Promise<void> {
   if (!params.requestId) return;
 
-  await supabaseAdmin
-    .from("assistant_requests")
-    .update({ status: params.success ? "completed" : "failed" })
-    .eq("id", params.requestId);
+  try {
+    db.prepare(`UPDATE assistant_requests SET status = ? WHERE id = ?`).run(
+      params.success ? "completed" : "failed",
+      params.requestId
+    );
+  } catch (error) {
+    console.error("[AssistantRuns] Failed to update request status", error);
+  }
 
   if (!params.runId) return;
 
-  const { error: runError } = await supabaseAdmin
-    .from("assistant_runs")
-    .update({
-      success: params.success,
-      message: params.message,
-      plan_json: toJson(params.plan ?? {}),
-      results_json: toJson(params.results ?? { error: params.error }),
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", params.runId);
-
-  if (runError) {
+  try {
+    // Note: plan_json and results_json aren't in the new schema, but we'll ignore them for now or add them if needed.
+    db.prepare(`
+      UPDATE assistant_runs 
+      SET success = ?, message = ?, finished_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      params.success ? 1 : 0,
+      params.message,
+      params.runId
+    );
+  } catch (runError) {
     console.error("[AssistantRuns] Failed to complete run", runError);
   }
 
   if (!params.stepsExecuted?.length) return;
 
-  const rows = params.stepsExecuted.map((step) => ({
-    run_id: params.runId,
-    step_index: step.index,
-    tool_name: step.tool,
-    params_json: toJson(step.params),
-    result_json: toJson(step.result),
-    success: true,
-    duration_ms: step.durationMs,
-  }));
+  try {
+    const insertStep = db.prepare(`
+      INSERT INTO assistant_steps (id, run_id, step_index, tool, params, result, duration_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
 
-  const { error: stepsError } = await supabaseAdmin.from("assistant_steps").upsert(rows);
-  if (stepsError) {
+    db.transaction(() => {
+      for (const step of params.stepsExecuted!) {
+        insertStep.run(
+          randomUUID(),
+          params.runId!,
+          step.index,
+          step.tool,
+          toJson(step.params) as string | null,
+          toJson(step.result) as string | null,
+          step.durationMs
+        );
+      }
+    })();
+  } catch (stepsError) {
     console.error("[AssistantRuns] Failed to persist steps", stepsError);
   }
 }
@@ -129,16 +136,21 @@ async function rememberTranscript(
   requestId: string,
 ): Promise<void> {
   const embedding = await createEmbedding(transcript);
-  const { error } = await supabaseAdmin.from("memory_items").insert({
-    clerk_user_id: clerkUserId,
-    kind: "transcript",
-    title: "Voice request",
-    body: transcript,
-    metadata: { requestId },
-    embedding,
-  });
-
-  if (error && error.code !== "42P01") {
+  
+  try {
+    db.prepare(`
+      INSERT INTO memory_items (id, clerk_user_id, kind, title, body, metadata, embedding)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      randomUUID(),
+      clerkUserId,
+      "transcript",
+      "Voice request",
+      transcript,
+      toJson({ requestId }) as string | null,
+      embedding
+    );
+  } catch (error) {
     console.error("[AssistantRuns] Failed to store transcript memory", error);
   }
 }
@@ -166,26 +178,32 @@ async function rememberContactsFromTranscript(
   const emailMatches = [...transcript.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)];
   if (emailMatches.length === 0) return;
 
-  const rows = emailMatches.map((match) => {
-    const email = match[0].toLowerCase();
-    const before = transcript.slice(Math.max(0, match.index - 48), match.index).trim();
-    const words = before.match(/[A-Za-z][A-Za-z'-]*/g) ?? [];
-    const displayName = words.slice(-2).join(" ") || email.split("@")[0];
+  const insertContact = db.prepare(`
+    INSERT INTO contacts (id, clerk_user_id, display_name, primary_email, notes)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(clerk_user_id, primary_email) DO UPDATE SET
+      display_name = excluded.display_name,
+      notes = excluded.notes
+  `);
 
-    return {
-      clerk_user_id: clerkUserId,
-      display_name: displayName,
-      primary_email: email,
-      aliases: [displayName.toLowerCase()],
-      notes: "Auto-captured from assistant transcript.",
-    };
-  });
+  try {
+    db.transaction(() => {
+      for (const match of emailMatches) {
+        const email = match[0].toLowerCase();
+        const before = transcript.slice(Math.max(0, match.index - 48), match.index).trim();
+        const words = before.match(/[A-Za-z][A-Za-z'-]*/g) ?? [];
+        const displayName = words.slice(-2).join(" ") || email.split("@")[0];
 
-  const { error } = await supabaseAdmin
-    .from("contacts")
-    .upsert(rows, { onConflict: "clerk_user_id,primary_email" });
-
-  if (error && error.code !== "42P01") {
+        insertContact.run(
+          randomUUID(),
+          clerkUserId,
+          displayName,
+          email,
+          "Auto-captured from assistant transcript."
+        );
+      }
+    })();
+  } catch (error) {
     console.error("[AssistantRuns] Failed to store contacts", error);
   }
 }

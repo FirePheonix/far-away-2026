@@ -6,6 +6,7 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { assistantRouter } from "./routes/assistant.routes.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { desktopAuthRouter } from "./routes/desktop-auth.routes.js";
+import { tasksRouter } from "./routes/tasks.routes.js";
 import { inngest } from "./workflows/inngest.js";
 import { inngestFunctions } from "./workflows/assistant.workflow.js";
 
@@ -19,6 +20,7 @@ export function createApp() {
   app.use("/api", assistantRouter);
   app.use("/api", authRouter);
   app.use("/api", desktopAuthRouter);
+  app.use("/api", tasksRouter);
 
   app.use(
     "/api/inngest",

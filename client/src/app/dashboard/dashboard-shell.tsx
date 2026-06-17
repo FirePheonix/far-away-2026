@@ -15,6 +15,7 @@ import {
   Database,
   LayoutDashboard,
   Link2,
+  ListTodo,
   Mail,
   NotepadText,
   Package,
@@ -61,6 +62,17 @@ type DashboardMemoryItem = {
   created_at: string;
 };
 
+type PendingTask = {
+  id: string;
+  run_id: string | null;
+  description: string;
+  required_fields: { name: string; type: string }[];
+  status: "pending" | "resolved" | "failed";
+  resolved_data: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type DashboardSummaryResponse = {
   profile: {
     email: string | null;
@@ -74,6 +86,7 @@ type DashboardSummaryResponse = {
   };
   apps: DashboardApp[];
   recentRuns: DashboardRun[];
+  pendingTasks: PendingTask[];
   contacts: DashboardContact[];
   memoryItems: DashboardMemoryItem[];
   dataStats: {
@@ -100,6 +113,7 @@ const NAV_GROUPS = [
     title: "General",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Tasks", href: "/dashboard/tasks", icon: ListTodo },
       { label: "Runs", href: "/dashboard/runs", icon: Activity },
       { label: "Connections", href: "/dashboard/connections", icon: Link2 },
       { label: "Apps", href: "/dashboard/apps", icon: Package },
@@ -112,7 +126,7 @@ const NAV_GROUPS = [
   },
 ];
 
-type DashboardView = "dashboard" | "apps" | "runs" | "connections" | "data" | "settings";
+type DashboardView = "dashboard" | "apps" | "runs" | "connections" | "data" | "settings" | "tasks";
 
 function prettyDuration(durationMs: number | null): string {
   if (!durationMs) return "Running";
@@ -222,14 +236,23 @@ export function DashboardShell({ view }: { view: DashboardView }) {
   }
 
   const oauthStateNote = useMemo(() => {
-    const status = searchParams.get("google");
-    if (status === "connected") return "Google connected successfully.";
-    if (status === "error") return "Google connection failed. Try again.";
+    for (const provider of ["google", "slack", "github", "notion"]) {
+      const status = searchParams.get(provider);
+      if (status === "connected") {
+        const name = provider.charAt(0).toUpperCase() + provider.slice(1);
+        return `${name} connected successfully.`;
+      }
+      if (status === "error") {
+        const name = provider.charAt(0).toUpperCase() + provider.slice(1);
+        return `${name} connection failed. Try again.`;
+      }
+    }
     return null;
   }, [searchParams]);
 
   const apps = summary?.apps ?? [];
   const runs = summary?.recentRuns ?? [];
+  const pendingTasks = summary?.pendingTasks ?? [];
   const contacts = summary?.contacts ?? [];
   const memoryItems = summary?.memoryItems ?? [];
   const connectedCount = apps.filter((app) => app.connected).length;
@@ -349,15 +372,17 @@ export function DashboardShell({ view }: { view: DashboardView }) {
                 <p className="text-sm text-brand-text/65">
                   {view === "apps"
                     ? "Connect the tools Clawvio can read from and act inside."
-                    : view === "runs"
-                      ? "Recent assistant executions from Supabase."
-                      : view === "connections"
-                        ? "Connection health across your workspace apps."
-                        : view === "data"
-                          ? "Workspace data sources and defaults."
-                          : view === "settings"
-                            ? "Account and workspace preferences."
-                            : "Conversation runs, workspace connections, and execution state."}
+                    : view === "tasks"
+                      ? "Pending actions that require your input."
+                      : view === "runs"
+                        ? "Recent assistant executions from Supabase."
+                        : view === "connections"
+                          ? "Connection health across your workspace apps."
+                          : view === "data"
+                            ? "Workspace data sources and defaults."
+                            : view === "settings"
+                              ? "Account and workspace preferences."
+                              : "Conversation runs, workspace connections, and execution state."}
                 </p>
               </div>
             </div>
@@ -389,6 +414,7 @@ export function DashboardShell({ view }: { view: DashboardView }) {
 
             {view === "dashboard" && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[
+                { label: "Pending Tasks", value: pendingTasks.length.toString(), meta: "needs your input", icon: ListTodo },
                 { label: "Connected Apps", value: `${connectedCount}/${apps.length || 7}`, meta: "available tools", icon: Link2 },
                 { label: "Total Runs", value: runs.length.toString(), meta: `${completedRuns} completed`, icon: Activity },
                 { label: "Contacts", value: contacts.length.toString(), meta: "remembered people", icon: Users2 },
@@ -664,6 +690,78 @@ export function DashboardShell({ view }: { view: DashboardView }) {
                 <p className="mt-1 text-sm text-brand-text/65">
                   Profile, notification, and workspace preferences will live here.
                 </p>
+              </section>
+            )}
+
+            {view === "tasks" && (
+              <section className="mt-4 rounded-lg border border-brand-dark/10 bg-white lg:col-span-4">
+                <div className="border-b border-brand-dark/10 p-4">
+                  <h2 className="font-semibold">Pending Tasks</h2>
+                  <p className="text-sm text-brand-text/65">Provide missing information to the assistant.</p>
+                </div>
+                <div className="divide-y divide-brand-dark/10">
+                  {loading && (
+                    <div className="px-4 py-8 text-sm text-brand-text/65">Loading pending tasks...</div>
+                  )}
+                  {!loading && pendingTasks.length === 0 && (
+                    <div className="px-4 py-10 text-sm text-brand-text/65">
+                      No pending tasks right now.
+                    </div>
+                  )}
+                  {!loading && pendingTasks.map((task) => (
+                    <div key={task.id} className="p-4 border-b border-brand-dark/5 last:border-b-0">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold mb-1">{task.description}</p>
+                          <div className="space-y-3 mt-3">
+                            {task.required_fields.map((field) => (
+                              <div key={field.name} className="flex flex-col gap-1.5">
+                                <label className="text-xs font-medium text-brand-text/75">{field.name}</label>
+                                <input
+                                  type="text"
+                                  className="h-8 rounded-md border border-brand-dark/20 px-2 text-sm focus:border-brand-dark focus:ring-1 focus:ring-brand-dark outline-none"
+                                  placeholder={`Enter ${field.name}`}
+                                  id={`task-input-${task.id}-${field.name}`}
+                                />
+                              </div>
+                            ))}
+                            <button
+                              onClick={async () => {
+                                const inputs: Record<string, string> = {};
+                                task.required_fields.forEach(field => {
+                                  const el = document.getElementById(`task-input-${task.id}-${field.name}`) as HTMLInputElement;
+                                  if (el) inputs[field.name] = el.value;
+                                });
+                                
+                                try {
+                                  const token = await getToken();
+                                  await fetch(`${API_URL}/tasks/${task.id}/resolve`, {
+                                    method: "POST",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      "Authorization": `Bearer ${token}`
+                                    },
+                                    body: JSON.stringify({ resolvedData: inputs })
+                                  });
+                                  // In a real app we'd refresh the dashboard data here
+                                  window.location.reload();
+                                } catch (e) {
+                                  console.error("Failed to resolve task", e);
+                                }
+                              }}
+                              className="h-8 mt-2 rounded-md bg-brand-dark px-3 text-xs font-semibold text-white transition hover:bg-black"
+                            >
+                              Submit
+                            </button>
+                          </div>
+                        </div>
+                        <span className="text-xs text-brand-text/55 shrink-0 whitespace-nowrap">
+                          {formatDate(task.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
           </div>

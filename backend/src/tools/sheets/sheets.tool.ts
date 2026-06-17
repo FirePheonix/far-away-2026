@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   spreadsheetCreateResultSchema,
   sheetRowResultSchema,
+  sheetsAppendRowParamsSchema,
   sheetsCreateSpreadsheetParamsSchema,
   sheetsFindEmailParamsSchema,
   sheetsGetLastRowParamsSchema,
@@ -21,6 +22,7 @@ type GetLastRowParams = z.output<typeof sheetsGetLastRowParamsSchema>;
 type GetRowParams = z.output<typeof sheetsGetRowParamsSchema>;
 type FindEmailParams = z.output<typeof sheetsFindEmailParamsSchema>;
 type CreateSpreadsheetParams = z.output<typeof sheetsCreateSpreadsheetParamsSchema>;
+type AppendRowParams = z.output<typeof sheetsAppendRowParamsSchema>;
 type FindEmailResult = { email: string; sheetName: string; rowNumber: number };
 
 export const sheetsSearchSheet: ToolDefinition<SearchParams, SheetRowResult[]> = {
@@ -106,6 +108,20 @@ export const sheetsCreateSpreadsheet: ToolDefinition<
     sheetsService.createSpreadsheet(params.title, params.sheetName, context.user?.clerkUserId),
 };
 
+export const sheetsAppendRow: ToolDefinition<AppendRowParams, SheetRowResult> = {
+  name: "sheets.append_row",
+  description: "Append a row to a Google Sheet",
+  paramsSchema: sheetsAppendRowParamsSchema,
+  resultSchema: sheetRowResultSchema,
+  execute: async (params, context) =>
+    sheetsService.appendRow(
+      params.sheetName,
+      params.values,
+      params.spreadsheetId,
+      context.user?.clerkUserId,
+    ),
+};
+
 export const sheetsTools = [
   sheetsSearchSheet,
   sheetsSearchAllSheets,
@@ -113,4 +129,5 @@ export const sheetsTools = [
   sheetsGetRow,
   sheetsFindEmail,
   sheetsCreateSpreadsheet,
+  sheetsAppendRow,
 ] as const;

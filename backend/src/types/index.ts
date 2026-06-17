@@ -5,6 +5,7 @@ export type ToolName =
   | "sheets.get_row"
   | "sheets.find_email"
   | "sheets.create_spreadsheet"
+  | "sheets.append_row"
   | "gmail.send_email"
   | "gmail.search_email"
   | "gmail.reply_email"
@@ -14,7 +15,11 @@ export type ToolName =
   | "meet.create_link"
   | "docs.create_document"
   | "docs.append_text"
-  | "docs.insert_template";
+  | "docs.insert_template"
+  | "slack_send_message"
+  | "github_create_issue"
+  | "notion_create_page"
+  | "request_user_input";
 
 export interface PlannedAction {
   tool: ToolName;

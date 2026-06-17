@@ -13,6 +13,10 @@ import { docsTools } from "./docs/docs.tool.js";
 import { gmailTools } from "./gmail/gmail.tool.js";
 import { meetTools } from "./meet/meet.tool.js";
 import { sheetsTools } from "./sheets/sheets.tool.js";
+import { slackTool } from "./slack.tool.js";
+import { githubTool } from "./github.tool.js";
+import { notionTool } from "./notion.tool.js";
+import { pendingTaskTool } from "./pending-task.tool.js";
 import type { AnyToolDefinition, ToolMetadata } from "./types.js";
 import { createExecutionContext } from "../utils/context.js";
 
@@ -22,6 +26,10 @@ const allTools: AnyToolDefinition[] = [
   ...calendarTools,
   ...meetTools,
   ...docsTools,
+  slackTool,
+  githubTool,
+  notionTool,
+  pendingTaskTool,
 ];
 
 export const toolRegistry = Object.fromEntries(

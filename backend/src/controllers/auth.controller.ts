@@ -1,12 +1,15 @@
 import type { NextFunction, Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
-import { supabaseAdmin } from "../config/supabase.js";
+import { db } from "../config/db.js";
 import { encryptSecret } from "../utils/crypto.js";
 import {
   buildGoogleAuthUrl,
   exchangeCodeForTokens,
   verifyOAuthState,
+  createOAuthState,
 } from "../services/google-oauth.service.js";
+import { buildIntegrationAuthUrl, exchangeIntegrationCode } from "../services/oauth.service.js";
 import { AppError } from "../utils/errors.js";
 
 type GoogleConnectionRow = {
@@ -25,15 +28,14 @@ function requireUserId(req: Request): string {
 }
 
 async function ensureProfile(clerkUserId: string, email?: string): Promise<void> {
-  const { error } = await supabaseAdmin.from("profiles").upsert(
-    {
-      clerk_user_id: clerkUserId,
-      email: email ?? null,
-    },
-    { onConflict: "clerk_user_id" },
-  );
-
-  if (error) {
+  try {
+    db.prepare(`
+      INSERT INTO profiles (clerk_user_id, email)
+      VALUES (@clerkUserId, @email)
+      ON CONFLICT(clerk_user_id) DO UPDATE SET 
+        email = COALESCE(@email, profiles.email)
+    `).run({ clerkUserId, email: email ?? null });
+  } catch (error) {
     throw new AppError("Failed to upsert profile", 500, "DB_ERROR", error);
   }
 }
@@ -44,20 +46,18 @@ function appRedirect(path = "/dashboard"): string {
 }
 
 async function loadActiveGoogleConnection(userId: string): Promise<GoogleConnectionRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from("google_connections")
-    .select("id, google_email, scopes, connected_at")
-    .eq("clerk_user_id", userId)
-    .is("revoked_at", null)
-    .order("connected_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
+  try {
+    const data = db.prepare(`
+      SELECT id, google_email, scopes, connected_at 
+      FROM google_connections 
+      WHERE clerk_user_id = ? AND revoked_at IS NULL 
+      ORDER BY connected_at DESC 
+      LIMIT 1
+    `).get(userId) as GoogleConnectionRow | undefined;
+    return data ?? null;
+  } catch (error) {
     throw new AppError("Failed to load Google integration status", 500, "DB_ERROR", error);
   }
-
-  return data;
 }
 
 function hasScope(scopes: string, fragment: string): boolean {
@@ -105,12 +105,9 @@ export async function startIntegrationOAuth(
     }
 
     if (provider === "slack" || provider === "github" || provider === "notion") {
-      throw new AppError(
-        `${provider} OAuth is not configured yet`,
-        501,
-        "INTEGRATION_NOT_CONFIGURED",
-        { provider },
-      );
+      const state = createOAuthState(userId);
+      res.json({ provider, authUrl: buildIntegrationAuthUrl(provider, state) });
+      return;
     }
 
     throw new AppError("Unknown integration provider", 404, "INTEGRATION_NOT_FOUND", {
@@ -148,96 +145,20 @@ export async function getDashboardSummary(
     const userId = requireUserId(req);
     await ensureProfile(userId);
 
-    const [
-      profileResult,
-      googleConnection,
-      requestsResult,
-      contactsResult,
-      memoryResult,
-      memoryVectorCountResult,
-    ] =
-      await Promise.all([
-      supabaseAdmin
-        .from("profiles")
-        .select("email, full_name, avatar_url")
-        .eq("clerk_user_id", userId)
-        .maybeSingle(),
-      loadActiveGoogleConnection(userId),
-      supabaseAdmin
-        .from("assistant_requests")
-        .select("id, transcript, status, created_at")
-        .eq("clerk_user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(30),
-      supabaseAdmin
-        .from("contacts")
-        .select("id, display_name, primary_email, organization, role, notes, created_at")
-        .eq("clerk_user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabaseAdmin
-        .from("memory_items")
-        .select("id, kind, title, body, metadata, created_at")
-        .eq("clerk_user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabaseAdmin
-        .from("memory_items")
-        .select("id", { count: "exact", head: true })
-        .eq("clerk_user_id", userId)
-        .not("embedding", "is", null),
-    ]);
+    const profile = db.prepare(`SELECT email, full_name, avatar_url FROM profiles WHERE clerk_user_id = ?`).get(userId) as any;
+    const googleConnection = await loadActiveGoogleConnection(userId);
+    
+    const requests = db.prepare(`SELECT id, transcript, status, created_at FROM assistant_requests WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 30`).all(userId) as any[];
+    const contacts = db.prepare(`SELECT id, display_name, primary_email, organization, role, notes, created_at FROM contacts WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 8`).all(userId);
+    const memoryItems = db.prepare(`SELECT id, kind, title, body, metadata, created_at FROM memory_items WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 8`).all(userId) as any[];
+    const vectorCountResult = db.prepare(`SELECT count(*) as count FROM memory_items WHERE clerk_user_id = ? AND embedding IS NOT NULL`).get(userId) as any;
+    const pendingTasks = db.prepare(`SELECT id, run_id, description, required_fields, status, resolved_data, created_at, updated_at FROM pending_tasks WHERE clerk_user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 20`).all(userId) as any[];
 
-    if (profileResult.error) {
-      throw new AppError("Failed to load profile", 500, "DB_ERROR", profileResult.error);
-    }
-
-    if (requestsResult.error) {
-      throw new AppError("Failed to load assistant requests", 500, "DB_ERROR", requestsResult.error);
-    }
-
-    if (contactsResult.error && contactsResult.error.code !== "42P01") {
-      throw new AppError("Failed to load contacts", 500, "DB_ERROR", contactsResult.error);
-    }
-
-    if (memoryResult.error && memoryResult.error.code !== "42P01") {
-      throw new AppError("Failed to load memory items", 500, "DB_ERROR", memoryResult.error);
-    }
-
-    if (memoryVectorCountResult.error && memoryVectorCountResult.error.code !== "42P01") {
-      throw new AppError(
-        "Failed to load vector memory count",
-        500,
-        "DB_ERROR",
-        memoryVectorCountResult.error,
-      );
-    }
-
-    const requests = requestsResult.data ?? [];
-    const requestIds = requests.map((request) => request.id);
-
-    let runs: {
-      id: string;
-      request_id: string;
-      success: boolean | null;
-      message: string | null;
-      started_at: string;
-      finished_at: string | null;
-    }[] = [];
-
+    const requestIds = requests.map((r) => r.id);
+    let runs: any[] = [];
     if (requestIds.length > 0) {
-      const runsResult = await supabaseAdmin
-        .from("assistant_runs")
-        .select("id, request_id, success, message, started_at, finished_at")
-        .in("request_id", requestIds)
-        .order("started_at", { ascending: false })
-        .limit(30);
-
-      if (runsResult.error) {
-        throw new AppError("Failed to load assistant runs", 500, "DB_ERROR", runsResult.error);
-      }
-
-      runs = runsResult.data ?? [];
+      const placeholders = requestIds.map(() => '?').join(',');
+      runs = db.prepare(`SELECT id, request_id, success, message, started_at, finished_at FROM assistant_runs WHERE request_id IN (${placeholders}) ORDER BY started_at DESC LIMIT 30`).all(...requestIds);
     }
 
     const requestById = new Map(requests.map((request) => [request.id, request]));
@@ -253,7 +174,7 @@ export async function getDashboardSummary(
           id: run.id,
           transcript: request.transcript,
           requestStatus: request.status,
-          success: run.success,
+          success: run.success === 1 ? true : run.success === 0 ? false : null,
           message: run.message,
           startedAt: run.started_at,
           finishedAt: run.finished_at,
@@ -264,18 +185,22 @@ export async function getDashboardSummary(
       .slice(0, 8);
 
     const scopes = googleConnection?.scopes ?? "";
+    
+    const oauthConns = db.prepare(`SELECT provider FROM oauth_connections WHERE clerk_user_id = ?`).all(userId) as any[];
+    const connectedProviders = new Set(oauthConns.map(c => c.provider));
+
     const apps = [
       { id: "google_sheets", label: "Google Sheets", connected: hasScope(scopes, "spreadsheets") },
       { id: "gmail", label: "Gmail", connected: hasScope(scopes, "gmail") },
       { id: "google_calendar", label: "Google Calendar", connected: hasScope(scopes, "calendar") },
       { id: "google_meet", label: "Google Meet", connected: hasScope(scopes, "calendar.events") },
-      { id: "slack", label: "Slack", connected: false },
-      { id: "github", label: "GitHub", connected: false },
-      { id: "notion", label: "Notion", connected: false },
+      { id: "slack", label: "Slack", connected: connectedProviders.has("slack") },
+      { id: "github", label: "GitHub", connected: connectedProviders.has("github") },
+      { id: "notion", label: "Notion", connected: connectedProviders.has("notion") },
     ];
 
     res.json({
-      profile: profileResult.data ?? null,
+      profile: profile ?? null,
       google: {
         connected: Boolean(googleConnection),
         email: googleConnection?.google_email ?? null,
@@ -283,12 +208,17 @@ export async function getDashboardSummary(
       },
       apps,
       recentRuns,
-      contacts: contactsResult.data ?? [],
-      memoryItems: memoryResult.data ?? [],
+      pendingTasks: pendingTasks.map(t => ({
+        ...t,
+        required_fields: JSON.parse(t.required_fields),
+        resolved_data: t.resolved_data ? JSON.parse(t.resolved_data) : null,
+      })),
+      contacts: contacts ?? [],
+      memoryItems: memoryItems.map(m => ({...m, metadata: m.metadata ? JSON.parse(m.metadata) : null})) ?? [],
       dataStats: {
-        contacts: contactsResult.data?.length ?? 0,
-        memories: memoryResult.data?.length ?? 0,
-        vectorReady: memoryVectorCountResult.count ?? 0,
+        contacts: contacts?.length ?? 0,
+        memories: memoryItems?.length ?? 0,
+        vectorReady: vectorCountResult?.count ?? 0,
       },
     });
   } catch (err) {
@@ -313,54 +243,126 @@ export async function googleOAuthCallback(
 
     await ensureProfile(userId, userInfo.email);
 
-    const { data: connection, error: connectionError } = await supabaseAdmin
-      .from("google_connections")
-      .upsert(
-        {
-          clerk_user_id: userId,
-          google_sub: userInfo.sub,
-          google_email: userInfo.email ?? null,
-          scopes: token.scope ?? "",
-          revoked_at: null,
-        },
-        { onConflict: "clerk_user_id,google_sub" },
-      )
-      .select("id")
-      .single();
+    let connectionId: string;
+    try {
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO google_connections (id, clerk_user_id, google_sub, google_email, scopes, revoked_at)
+          VALUES (@id, @clerkUserId, @googleSub, @googleEmail, @scopes, NULL)
+          ON CONFLICT(clerk_user_id, google_sub) DO UPDATE SET 
+            google_email = excluded.google_email,
+            scopes = excluded.scopes,
+            revoked_at = NULL
+        `).run({
+          id: randomUUID(),
+          clerkUserId: userId,
+          googleSub: userInfo.sub,
+          googleEmail: userInfo.email ?? null,
+          scopes: token.scope ?? ""
+        });
 
-    if (connectionError || !connection?.id) {
-      throw new AppError(
-        "Failed to save Google connection",
-        500,
-        "DB_ERROR",
-        connectionError ?? "Missing connection id",
-      );
-    }
+        const conn = db.prepare(`SELECT id FROM google_connections WHERE clerk_user_id = ? AND google_sub = ?`).get(userId, userInfo.sub) as any;
+        connectionId = conn.id;
 
-    const expiresAt =
-      typeof token.expires_in === "number"
-        ? new Date(Date.now() + token.expires_in * 1000).toISOString()
-        : null;
+        const expiresAt = typeof token.expires_in === "number"
+            ? new Date(Date.now() + token.expires_in * 1000).toISOString()
+            : null;
 
-    const { error: tokenError } = await supabaseAdmin.from("google_tokens").upsert(
-      {
-        connection_id: connection.id,
-        access_token_enc: encryptSecret(token.access_token),
-        refresh_token_enc: token.refresh_token ? encryptSecret(token.refresh_token) : null,
-        token_type: token.token_type ?? null,
-        scope_text: token.scope ?? null,
-        expires_at: expiresAt,
-      },
-      { onConflict: "connection_id" },
-    );
-
-    if (tokenError) {
-      throw new AppError("Failed to save Google tokens", 500, "DB_ERROR", tokenError);
+        db.prepare(`
+          INSERT INTO google_tokens (connection_id, access_token_enc, refresh_token_enc, token_type, scope_text, expires_at)
+          VALUES (@connectionId, @accessTokenEnc, @refreshTokenEnc, @tokenType, @scopeText, @expiresAt)
+          ON CONFLICT(connection_id) DO UPDATE SET
+            access_token_enc = excluded.access_token_enc,
+            refresh_token_enc = COALESCE(excluded.refresh_token_enc, google_tokens.refresh_token_enc),
+            token_type = excluded.token_type,
+            scope_text = excluded.scope_text,
+            expires_at = excluded.expires_at
+        `).run({
+          connectionId,
+          accessTokenEnc: encryptSecret(token.access_token),
+          refreshTokenEnc: token.refresh_token ? encryptSecret(token.refresh_token) : null,
+          tokenType: token.token_type ?? null,
+          scopeText: token.scope ?? null,
+          expiresAt
+        });
+      })();
+    } catch (connectionError) {
+      throw new AppError("Failed to save Google connection and tokens", 500, "DB_ERROR", connectionError);
     }
 
     res.redirect(appRedirect("/dashboard?google=connected"));
   } catch (err) {
     const details = err instanceof Error ? encodeURIComponent(err.message) : "unknown_error";
     res.redirect(appRedirect(`/dashboard?google=error&reason=${details}`));
+  }
+}
+
+export async function integrationOAuthCallback(
+  req: Request,
+  res: Response,
+  _next: NextFunction,
+): Promise<void> {
+  const provider = req.params.provider;
+  try {
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    if (!code || !state) {
+      throw new AppError(`Missing ${provider} OAuth callback params`, 400, "OAUTH_CALLBACK_INVALID");
+    }
+
+    const { userId } = verifyOAuthState(state);
+    const tokenInfo = await exchangeIntegrationCode(provider, code);
+
+    await ensureProfile(userId);
+
+    let connectionId: string;
+    try {
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO oauth_connections (id, clerk_user_id, provider, provider_user_id)
+          VALUES (@id, @clerkUserId, @provider, @providerUserId)
+          ON CONFLICT(clerk_user_id, provider) DO UPDATE SET 
+            provider_user_id = excluded.provider_user_id,
+            connected_at = CURRENT_TIMESTAMP
+        `).run({
+          id: randomUUID(),
+          clerkUserId: userId,
+          provider,
+          providerUserId: tokenInfo.providerUserId,
+        });
+
+        const conn = db.prepare(`SELECT id FROM oauth_connections WHERE clerk_user_id = ? AND provider = ?`).get(userId, provider) as any;
+        connectionId = conn.id;
+
+        const expiresAt = tokenInfo.expiresIn
+            ? new Date(Date.now() + tokenInfo.expiresIn * 1000).toISOString()
+            : null;
+
+        db.prepare(`
+          INSERT INTO oauth_tokens (connection_id, access_token_enc, refresh_token_enc, token_type, scope_text, expires_at)
+          VALUES (@connectionId, @accessTokenEnc, @refreshTokenEnc, @tokenType, @scopeText, @expiresAt)
+          ON CONFLICT(connection_id) DO UPDATE SET
+            access_token_enc = excluded.access_token_enc,
+            refresh_token_enc = COALESCE(excluded.refresh_token_enc, oauth_tokens.refresh_token_enc),
+            token_type = excluded.token_type,
+            scope_text = excluded.scope_text,
+            expires_at = excluded.expires_at
+        `).run({
+          connectionId,
+          accessTokenEnc: encryptSecret(tokenInfo.accessToken),
+          refreshTokenEnc: tokenInfo.refreshToken ? encryptSecret(tokenInfo.refreshToken) : null,
+          tokenType: tokenInfo.tokenType ?? null,
+          scopeText: tokenInfo.scope ?? null,
+          expiresAt
+        });
+      })();
+    } catch (connectionError) {
+      throw new AppError(`Failed to save ${provider} connection and tokens`, 500, "DB_ERROR", connectionError);
+    }
+
+    res.redirect(appRedirect(`/dashboard?${provider}=connected`));
+  } catch (err) {
+    const details = err instanceof Error ? encodeURIComponent(err.message) : "unknown_error";
+    res.redirect(appRedirect(`/dashboard?${provider}=error&reason=${details}`));
   }
 }
