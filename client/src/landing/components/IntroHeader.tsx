@@ -1,6 +1,7 @@
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import { motion } from "framer-motion";
 import { Star, Play } from "lucide-react";
+import Link from "next/link";
 
 const IntroHeader = () => {
   const downloadUrl =
@@ -75,7 +76,7 @@ const IntroHeader = () => {
           <span className="bg-brand-dark text-white rounded-full p-0.5 group-hover:bg-black transition-colors">
             <Play size={10} fill="currentColor" className="ml-0.5" />
           </span>
-        </a>
+        </Link>
       </motion.div>
     </div>
   );
