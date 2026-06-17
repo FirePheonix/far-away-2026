@@ -67,7 +67,7 @@ const IntroHeader = () => {
           Download for Windows
         </a>
         <Link
-          href="https://youtu.be/6GB_gsO2cXo?si=H9pa9uIgJpd0Z9IG"
+          href="https://www.youtube.com/watch?v=tm4-AJm00DU"
           target="_blank"
           rel="noreferrer"
           className="bg-[#EBE9E4] text-brand-dark text-sm font-medium px-6 py-3.5 rounded-full hover:bg-[#E0DED9] transition-all hover:scale-105 active:scale-95 duration-300 flex items-center gap-2 group"
