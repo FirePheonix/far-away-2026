@@ -23,8 +23,9 @@ export async function sendEmail(
   to: string,
   subject: string,
   body: string,
+  clerkUserId?: string,
 ): Promise<EmailResult> {
-  if (env.GOOGLE_MOCK_MODE || !isGoogleConfigured()) {
+  if (env.GOOGLE_MOCK_MODE || (!clerkUserId && !isGoogleConfigured())) {
     return {
       messageId: `mock-${Date.now()}`,
       to,
@@ -33,7 +34,16 @@ export async function sendEmail(
     };
   }
 
-  const { gmail } = await getGoogleClients();
+  const { gmail, auth } = await getGoogleClients(clerkUserId);
+  if (!auth) {
+    return {
+      messageId: `mock-${Date.now()}`,
+      to,
+      subject,
+      status: "mock",
+    };
+  }
+
   const response = await gmail.users.messages.send({
     userId: "me",
     requestBody: {
@@ -53,8 +63,9 @@ export async function sendEmail(
 export async function searchEmail(
   query: string,
   maxResults = 10,
+  clerkUserId?: string,
 ): Promise<EmailSearchResult> {
-  if (env.GOOGLE_MOCK_MODE || !isGoogleConfigured()) {
+  if (env.GOOGLE_MOCK_MODE || (!clerkUserId && !isGoogleConfigured())) {
     return {
       messages: [
         {
@@ -68,7 +79,11 @@ export async function searchEmail(
     };
   }
 
-  const { gmail } = await getGoogleClients();
+  const { gmail, auth } = await getGoogleClients(clerkUserId);
+  if (!auth) {
+    return { messages: [] };
+  }
+
   const list = await gmail.users.messages.list({
     userId: "me",
     q: query,
@@ -105,8 +120,9 @@ export async function replyEmail(
   messageId: string,
   body: string,
   threadId?: string,
+  clerkUserId?: string,
 ): Promise<EmailResult> {
-  if (env.GOOGLE_MOCK_MODE || !isGoogleConfigured()) {
+  if (env.GOOGLE_MOCK_MODE || (!clerkUserId && !isGoogleConfigured())) {
     return {
       messageId: `mock-reply-${Date.now()}`,
       threadId: threadId ?? "mock-thread",
@@ -116,7 +132,17 @@ export async function replyEmail(
     };
   }
 
-  const { gmail } = await getGoogleClients();
+  const { gmail, auth } = await getGoogleClients(clerkUserId);
+  if (!auth) {
+    return {
+      messageId: `mock-reply-${Date.now()}`,
+      threadId: threadId ?? "mock-thread",
+      to: "recipient@example.com",
+      subject: "Re: (mock)",
+      status: "mock",
+    };
+  }
+
   const original = await gmail.users.messages.get({
     userId: "me",
     id: messageId,

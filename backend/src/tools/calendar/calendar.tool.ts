@@ -61,6 +61,7 @@ export const calendarCreateEvent: ToolDefinition<CreateParams, CalendarEventResu
       timeZone: params.timeZone,
       calendarId: params.calendarId,
       meetLink: resolveMeetLink(params, context),
+      clerkUserId: context.user?.clerkUserId,
     }),
 };
 
@@ -69,8 +70,11 @@ export const calendarListEvents: ToolDefinition<ListParams, CalendarEventResult[
   description: "List calendar events in a time range",
   paramsSchema: calendarListEventsParamsSchema,
   resultSchema: calendarEventResultSchema.array(),
-  execute: async (params) => {
-    const { events } = await calendarService.listEvents(params);
+  execute: async (params, context) => {
+    const { events } = await calendarService.listEvents({
+      ...params,
+      clerkUserId: context.user?.clerkUserId,
+    });
     return events;
   },
 };
@@ -80,7 +84,8 @@ export const calendarFindFreeSlots: ToolDefinition<FreeSlotParams, FreeSlotResul
   description: "Find available time slots on the calendar",
   paramsSchema: calendarFindFreeSlotsParamsSchema,
   resultSchema: freeSlotResultSchema,
-  execute: async (params) => calendarService.findFreeSlots(params),
+  execute: async (params, context) =>
+    calendarService.findFreeSlots({ ...params, clerkUserId: context.user?.clerkUserId }),
 };
 
 export const calendarTools = [

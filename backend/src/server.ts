@@ -4,16 +4,21 @@ import { serve } from "inngest/express";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { assistantRouter } from "./routes/assistant.routes.js";
+import { authRouter } from "./routes/auth.routes.js";
+import { desktopAuthRouter } from "./routes/desktop-auth.routes.js";
 import { inngest } from "./workflows/inngest.js";
 import { inngestFunctions } from "./workflows/assistant.workflow.js";
 
 export function createApp() {
   const app = express();
 
-  app.use(cors({ origin: env.CORS_ORIGIN }));
+  const corsOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+  app.use(cors({ origin: corsOrigins }));
   app.use(express.json());
 
   app.use("/api", assistantRouter);
+  app.use("/api", authRouter);
+  app.use("/api", desktopAuthRouter);
 
   app.use(
     "/api/inngest",
@@ -34,5 +39,6 @@ const app = createApp();
 app.listen(env.PORT, () => {
   console.log(`Assistant backend listening on http://localhost:${env.PORT}`);
   console.log(`  POST /api/assistant`);
+  console.log(`  POST /api/desktop/pairings`);
   console.log(`  Inngest endpoint: http://localhost:${env.PORT}/api/inngest`);
 });

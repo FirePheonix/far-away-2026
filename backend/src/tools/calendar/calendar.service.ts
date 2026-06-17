@@ -15,8 +15,9 @@ export async function createEvent(params: {
   timeZone?: string;
   calendarId?: string;
   meetLink?: string;
+  clerkUserId?: string;
 }): Promise<CalendarEventResult> {
-  if (env.GOOGLE_MOCK_MODE || !isGoogleConfigured()) {
+  if (env.GOOGLE_MOCK_MODE || (!params.clerkUserId && !isGoogleConfigured())) {
     return {
       eventId: `mock-event-${Date.now()}`,
       title: params.title,
@@ -28,8 +29,21 @@ export async function createEvent(params: {
     };
   }
 
-  const { calendar } = await getGoogleClients();
+  const { calendar, auth } = await getGoogleClients(params.clerkUserId);
+  if (!auth) {
+    return {
+      eventId: `mock-event-${Date.now()}`,
+      title: params.title,
+      start: params.start,
+      end: params.end,
+      htmlLink: "https://calendar.google.com/mock",
+      meetLink: params.meetLink ?? "https://meet.google.com/mock-link",
+      status: "mock",
+    };
+  }
+
   const tz = params.timeZone ?? "UTC";
+  const shouldCreateMeet = !params.meetLink;
 
   const requestBody = {
     summary: params.title,
@@ -37,24 +51,22 @@ export async function createEvent(params: {
     start: { dateTime: params.start, timeZone: tz },
     end: { dateTime: params.end, timeZone: tz },
     attendees: params.attendees?.map((email) => ({ email })),
-    // conferenceData: params.meetLink
-    //   ? undefined
-    //   : {
-    //       createRequest: {
-    //         requestId: `meet-${Date.now()}`,
-    //         conferenceSolutionKey: { type: "hangoutsMeet" },
-    //       },
-    //     },
-    // location: params.meetLink,
-    conferenceData: undefined
+    location: params.meetLink,
+    conferenceData: shouldCreateMeet
+      ? {
+          createRequest: {
+            requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            conferenceSolutionKey: { type: "hangoutsMeet" },
+          },
+        }
+      : undefined,
   };
 
   let response;
   try {
     response = await calendar.events.insert({
       calendarId: calendarId(params.calendarId),
-      // conferenceDataVersion: params.meetLink ? 0 : 1,
-      conferenceDataVersion: 0,
+      conferenceDataVersion: shouldCreateMeet ? 1 : 0,
       requestBody,
     });
   } catch (err: any) {
@@ -64,8 +76,7 @@ export async function createEvent(params: {
       delete requestBody.attendees;
       response = await calendar.events.insert({
         calendarId: calendarId(params.calendarId),
-        // conferenceDataVersion: params.meetLink ? 0 : 1,
-        conferenceDataVersion:0,
+        conferenceDataVersion: shouldCreateMeet ? 1 : 0,
         requestBody,
       });
     } else {
@@ -75,6 +86,7 @@ export async function createEvent(params: {
 
   const meetLink =
     params.meetLink ??
+    response.data.hangoutLink ??
     response.data.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")
       ?.uri ??
     undefined;
@@ -95,8 +107,9 @@ export async function listEvents(params: {
   timeMin?: string;
   timeMax?: string;
   maxResults?: number;
+  clerkUserId?: string;
 }): Promise<{ events: CalendarEventResult[] }> {
-  if (env.GOOGLE_MOCK_MODE || !isGoogleConfigured()) {
+  if (env.GOOGLE_MOCK_MODE || (!params.clerkUserId && !isGoogleConfigured())) {
     return {
       events: [
         {
@@ -110,7 +123,11 @@ export async function listEvents(params: {
     };
   }
 
-  const { calendar } = await getGoogleClients();
+  const { calendar, auth } = await getGoogleClients(params.clerkUserId);
+  if (!auth) {
+    return { events: [] };
+  }
+
   const response = await calendar.events.list({
     calendarId: calendarId(params.calendarId),
     timeMin: params.timeMin ?? new Date().toISOString(),
@@ -140,6 +157,7 @@ export async function findFreeSlots(params: {
   timeMax?: string;
   workingHoursStart?: number;
   workingHoursEnd?: number;
+  clerkUserId?: string;
 }): Promise<FreeSlotResult> {
   const durationMs = (params.durationMinutes ?? 30) * 60_000;
   const timeMin = new Date(params.timeMin ?? Date.now());
@@ -149,6 +167,7 @@ export async function findFreeSlots(params: {
     calendarId: params.calendarId,
     timeMin: timeMin.toISOString(),
     timeMax: timeMax.toISOString(),
+    clerkUserId: params.clerkUserId,
   });
 
   const busy = events

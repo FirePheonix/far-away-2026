@@ -14,8 +14,8 @@ import threading
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QPainter, QColor, QFont, QIcon, QAction
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF
+from PyQt6.QtGui import QPainter, QColor, QFont, QIcon, QAction, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QFrame, QSystemTrayIcon, QMenu
@@ -24,7 +24,6 @@ import numpy as np
 import pyperclip
 import soundcard as sc
 import sounddevice as sd
-from PIL import Image, ImageDraw
 from pynput import keyboard as pynput_kb
 from faster_whisper import WhisperModel
 
@@ -45,20 +44,17 @@ _CARD_H_R = 290
 
 
 def _make_qicon(size=64, color="#1BB9CE") -> QIcon:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = size
-    d.rounded_rectangle([s*.30, s*.04, s*.70, s*.58], radius=s*.18, fill=color)
-    d.arc([s*.14, s*.36, s*.86, s*.76], start=0, end=180, fill=color, width=max(3, int(s*.06)))
-    cx = s // 2
-    d.rectangle([cx - s*.04, s*.74, cx + s*.04, s*.88], fill=color)
-    d.rectangle([s*.30, s*.86, s*.70, s*.94], fill=color)
-    from PyQt6.QtGui import QPixmap
-    import io
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    px = QPixmap()
-    px.loadFromData(buf.getvalue())
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    s = float(size)
+    p.drawRoundedRect(QRectF(s * 0.30, s * 0.04, s * 0.40, s * 0.54), s * 0.18, s * 0.18)
+    p.drawRect(int(s * 0.46), int(s * 0.74), int(s * 0.08), int(s * 0.14))
+    p.drawRoundedRect(QRectF(s * 0.30, s * 0.86, s * 0.40, s * 0.08), s * 0.04, s * 0.04)
+    p.end()
     return QIcon(px)
 
 
@@ -139,7 +135,9 @@ class AudioVisualizer(QWidget):
         for i in range(5):
             x = 2 + i * 8
             if self.mode == "listening":
-                rms_val = min(1.0, self.rms * 6.0)
+                # Use a logarithmic scale for RMS so quiet sounds (e.g. Mac mics) still move the visualizer
+                db = 20 * math.log10(max(1e-5, self.rms))
+                rms_val = max(0.0, min(1.0, (db + 40) / 30.0))
                 p = max(0.0, min(1.0, rms_val + (i - 2) * 0.08 + random.uniform(-0.04, 0.04)))
                 h = int(6 + p * 26)
             elif self.mode == "processing":
@@ -153,6 +151,8 @@ class AudioVisualizer(QWidget):
 
 class TranscriptionSignals(QObject):
     result_ready = pyqtSignal(str, bool)
+    assistant_ready = pyqtSignal(str, bool)
+    assistant_toast = pyqtSignal(str, str, bool)
 
 
 class FloatingOverlay(QWidget):
@@ -257,6 +257,8 @@ class FloatingOverlay(QWidget):
         self.status_lbl.setStyleSheet(f"color: {_TEXT};")
         self.visualizer.set_mode("listening", _RED)
         self.show()
+        self.raise_()
+        self.activateWindow()
         self._fade_to(0.95)
 
     def show_processing(self):
@@ -269,6 +271,8 @@ class FloatingOverlay(QWidget):
         self.visualizer.set_mode("processing", _ACCENT)
         self.visualizer.phase = 0.0
         self.show()
+        self.raise_()
+        self.activateWindow()
         self._fade_to(0.95)
 
     def show_result(self, text: str, ok: bool = True):
@@ -282,6 +286,23 @@ class FloatingOverlay(QWidget):
         self.result_box.setPlainText(text)
         self.res_widget.show()
         self._position(_CARD_H_R)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def show_assistant_toast(self, title: str, message: str, ok: bool = True):
+        self._state = "result"
+        color = _GREEN if ok else _RED
+        self.icon_lbl.setStyleSheet(f"color: {color};")
+        self.status_lbl.setText(title)
+        self.status_lbl.setStyleSheet(f"color: {color};")
+        self.visualizer.set_mode("flat", _SUBTEXT)
+        self.heard_lbl.setText("Clawvio assistant")
+        self.result_box.setPlainText(message)
+        self.res_widget.show()
+        self._position(_CARD_H_R)
+        self.show()
+        self._fade_to(0.95)
 
     def dismiss(self):
         if self._state == "hidden":
@@ -337,6 +358,8 @@ class LocalSTT(QObject):
 
         self.signals = TranscriptionSignals()
         self.signals.result_ready.connect(self._handle_result_ready)
+        self.signals.assistant_ready.connect(self._handle_assistant_ready)
+        self.signals.assistant_toast.connect(self._handle_assistant_toast)
 
         self._pressed: set[str] = set()
         self._hotkey_fired = False
@@ -344,6 +367,8 @@ class LocalSTT(QObject):
         self._build_tray()
         self._start_hotkey_listener()
         threading.Thread(target=self._load_model, daemon=True).start()
+        if assistant_client.is_enabled() and not assistant_client.saved_desktop_token():
+            threading.Thread(target=self._pair_assistant, daemon=True).start()
 
     def _get_loopback_device(self):
         try:
@@ -357,7 +382,9 @@ class LocalSTT(QObject):
 
     def _load_model(self):
         print("[local-stt] loading model…")
-        self._model = WhisperModel("small", device="cpu", compute_type="int8")
+        # int8 compute type on Apple Silicon causes bad transcriptions, so we use float32 on macOS
+        c_type = "float32" if SYS == "Darwin" else "int8"
+        self._model = WhisperModel("small", device="cpu", compute_type=c_type)
         self._model_ready.set()
         print("[local-stt] model ready")
         self._tray_update_tooltip("local-stt  ·  ready")
@@ -370,6 +397,9 @@ class LocalSTT(QObject):
         menu.addSeparator()
         b = QAction("Ctrl+Shift+Space to record", menu); b.setEnabled(False); menu.addAction(b)
         menu.addSeparator()
+        connect = QAction("Connect Clawvio", menu); connect.triggered.connect(self._connect_assistant); menu.addAction(connect)
+        logout = QAction("Disconnect Clawvio", menu); logout.triggered.connect(self._logout_assistant); menu.addAction(logout)
+        menu.addSeparator()
         q = QAction("Quit", menu); q.triggered.connect(self._quit); menu.addAction(q)
         self.tray.setContextMenu(menu)
         self.tray.show()
@@ -377,9 +407,33 @@ class LocalSTT(QObject):
     def _tray_update_tooltip(self, msg: str):
         self.tray.setToolTip(msg)
 
+    def _pair_assistant(self):
+        try:
+            self.signals.assistant_ready.emit("Opening browser to connect Clawvio desktop.", True)
+            assistant_client.ensure_paired()
+            self.signals.assistant_ready.emit("Clawvio desktop connected.", True)
+        except Exception as e:
+            print(f"[local-stt] desktop pairing error: {e}")
+            self.signals.assistant_ready.emit(f"Desktop pairing failed: {e}", False)
+
+    def _connect_assistant(self):
+        threading.Thread(target=self._pair_assistant, daemon=True).start()
+
+    def _logout_assistant(self):
+        def _run():
+            try:
+                assistant_client.logout()
+                self.signals.assistant_ready.emit("Clawvio desktop disconnected.", True)
+                self._tray_update_tooltip("local-stt  Â·  disconnected")
+            except Exception as e:
+                print(f"[local-stt] logout error: {e}")
+                self.signals.assistant_ready.emit(f"Logout failed: {e}", False)
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _start_hotkey_listener(self):
         def _tag(key):
-            if key in (pynput_kb.Key.ctrl_l, pynput_kb.Key.ctrl_r, pynput_kb.Key.ctrl): return "ctrl"
+            if key in (pynput_kb.Key.ctrl_l, pynput_kb.Key.ctrl_r, pynput_kb.Key.ctrl, pynput_kb.Key.cmd, pynput_kb.Key.cmd_l, pynput_kb.Key.cmd_r): return "ctrl"
             if key in (pynput_kb.Key.shift, pynput_kb.Key.shift_l, pynput_kb.Key.shift_r): return "shift"
             if key == pynput_kb.Key.space: return "space"
             return None
@@ -387,7 +441,9 @@ class LocalSTT(QObject):
         def on_press(key):
             tag = _tag(key)
             if tag: self._pressed.add(tag)
+            # print(f"[debug] pressed: {key}, current pressed tags: {self._pressed}")
             if self._pressed >= self._HOTKEY and not self._hotkey_fired:
+                print("[local-stt] Hotkey detected! Toggling recording...")
                 self._hotkey_fired = True
                 QTimer.singleShot(0, self._toggle)
 
@@ -402,6 +458,7 @@ class LocalSTT(QObject):
         listener.start()
 
     def _toggle(self):
+        print(f"[local-stt] _toggle called! Currently recording: {self._recording}")
         with self._lock:
             if not self._recording:
                 self._begin_recording()
@@ -534,7 +591,8 @@ class LocalSTT(QObject):
                     beam_size=1,
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500),
-                    word_timestamps=True
+                    word_timestamps=True,
+                    initial_prompt="shivanshumangal007@gmail.com, shivanshumangal, @gmail.com, dot, at."
                 )
 
                 # Word-level splitting: even when the VAD merges two
@@ -587,6 +645,7 @@ class LocalSTT(QObject):
 
     def _handle_result_ready(self, text: str, ok: bool):
         if ok and text:
+            text = assistant_client.normalize_spoken_email(text)
             pyperclip.copy(text)
             print(f"[local-stt] copied:\n{text}")
 
@@ -596,12 +655,39 @@ class LocalSTT(QObject):
                         print("[local-stt] sending to backend...")
                         res = assistant_client.send_transcript(text, async_mode=True)
                         print(f"[local-stt] backend response: {assistant_client.format_result_summary(res)}")
+                        request_id = res.get("requestId")
+                        self.signals.assistant_toast.emit(
+                            "Clawvio is working",
+                            "Your request is queued. I’ll update this bar when it finishes.",
+                            True,
+                        )
+                        if request_id:
+                            final = assistant_client.wait_for_completion(request_id)
+                            run = final.get("run") or {}
+                            request = final.get("request") or {}
+                            finished = request.get("status") == "completed"
+                            ok_final = finished and run.get("success") is not False
+                            title, msg = assistant_client.format_completion_toast(final)
+                            self.signals.assistant_toast.emit(title, msg, ok_final)
                     except Exception as e:
                         print(f"[local-stt] backend error: {e}")
+                        self.signals.assistant_toast.emit("Clawvio error", str(e), False)
                 threading.Thread(target=_send, daemon=True).start()
 
         self.overlay.show_result(text, ok)
         self._tray_update_tooltip("local-stt  ·  ready")
+
+    def _handle_assistant_ready(self, message: str, ok: bool):
+        icon = (
+            QSystemTrayIcon.MessageIcon.Information
+            if ok
+            else QSystemTrayIcon.MessageIcon.Warning
+        )
+        title = "Clawvio assistant" if ok else "Clawvio assistant failed"
+        self.tray.showMessage(title, message, icon, 6000)
+
+    def _handle_assistant_toast(self, title: str, message: str, ok: bool):
+        self.overlay.show_assistant_toast(title, message, ok)
 
     def _quit(self):
         self.tray.hide()

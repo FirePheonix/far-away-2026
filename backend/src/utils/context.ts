@@ -1,9 +1,23 @@
 import type { ExecutionContext } from "../types/index.js";
 
-export function createExecutionContext(totalSteps = 0): ExecutionContext {
+export function createExecutionContext(
+  totalSteps = 0,
+  options: {
+    clerkUserId?: string;
+    requestId?: string;
+    source?: "api" | "voice" | "local-stt" | "web";
+  } = {},
+): ExecutionContext {
   return {
     previousResults: {},
     variables: {},
+    user: {
+      clerkUserId: options.clerkUserId,
+    },
+    request: {
+      id: options.requestId,
+      source: options.source,
+    },
     executionState: {
       currentStep: 0,
       totalSteps,

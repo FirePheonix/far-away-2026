@@ -1,15 +1,20 @@
 export type ToolName =
   | "sheets.search_sheet"
+  | "sheets.search_all_sheets"
   | "sheets.get_last_row"
   | "sheets.get_row"
   | "sheets.find_email"
+  | "sheets.create_spreadsheet"
   | "gmail.send_email"
   | "gmail.search_email"
   | "gmail.reply_email"
   | "calendar.create_event"
   | "calendar.list_events"
   | "calendar.find_free_slots"
-  | "meet.create_link";
+  | "meet.create_link"
+  | "docs.create_document"
+  | "docs.append_text"
+  | "docs.insert_template";
 
 export interface PlannedAction {
   tool: ToolName;
@@ -23,6 +28,13 @@ export interface ExecutionPlan {
 export interface ExecutionContext {
   previousResults: Record<string, unknown>;
   variables: Record<string, unknown>;
+  user?: {
+    clerkUserId?: string;
+  };
+  request?: {
+    id?: string;
+    source?: "api" | "voice" | "local-stt" | "web";
+  };
   executionState: {
     currentStep: number;
     totalSteps: number;
@@ -61,5 +73,6 @@ export interface AssistantResponseBody {
 export interface VoiceRequestEventData {
   transcript: string;
   requestId?: string;
-  source?: "api" | "voice" | "local-stt";
+  clerkUserId?: string;
+  source?: "api" | "voice" | "local-stt" | "web";
 }

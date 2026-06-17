@@ -36,11 +36,16 @@ export const gmailSendEmail: ToolDefinition<SendParams, EmailResult> = {
   description: "Send an email via Gmail",
   paramsSchema: gmailSendEmailParamsSchema,
   resultSchema: emailResultSchema,
-  execute: async (params) => {
+  execute: async (params, context) => {
     if (!params.to) {
       throw new Error("gmail.send_email requires 'to' address (or emailFromPreviousStep)");
     }
-    return gmailService.sendEmail(params.to, params.subject, params.body);
+    return gmailService.sendEmail(
+      params.to,
+      params.subject,
+      params.body,
+      context.user?.clerkUserId,
+    );
   },
 };
 
@@ -49,7 +54,8 @@ export const gmailSearchEmail: ToolDefinition<SearchParams, EmailSearchResult> =
   description: "Search Gmail messages",
   paramsSchema: gmailSearchEmailParamsSchema,
   resultSchema: emailSearchResultSchema,
-  execute: async (params) => gmailService.searchEmail(params.query, params.maxResults),
+  execute: async (params, context) =>
+    gmailService.searchEmail(params.query, params.maxResults, context.user?.clerkUserId),
 };
 
 export const gmailReplyEmail: ToolDefinition<ReplyParams, EmailResult> = {
@@ -57,8 +63,13 @@ export const gmailReplyEmail: ToolDefinition<ReplyParams, EmailResult> = {
   description: "Reply to an existing Gmail message",
   paramsSchema: gmailReplyEmailParamsSchema,
   resultSchema: emailResultSchema,
-  execute: async (params) =>
-    gmailService.replyEmail(params.messageId, params.body, params.threadId),
+  execute: async (params, context) =>
+    gmailService.replyEmail(
+      params.messageId,
+      params.body,
+      params.threadId,
+      context.user?.clerkUserId,
+    ),
 };
 
 export const gmailTools = [gmailSendEmail, gmailSearchEmail, gmailReplyEmail] as const;
