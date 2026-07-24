@@ -1,3 +1,0 @@
-# Ensure C++ runtime is available when linking native deps on MSVC.
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/NODEFAULTLIB:LIBCMT"]
