@@ -1137,6 +1137,7 @@ impl LocalSttApp {
             OverlayAction::Pause { .. } => "Snoozing…",
             OverlayAction::StopRun { .. } => "Stopping…",
             OverlayAction::ChooseOption { .. } => "Choosing…",
+            OverlayAction::SubmitInput { .. } => "Submitting…",
             OverlayAction::Decide { decision, .. } => {
                 if decision == "retry" {
                     "Retrying…"
@@ -1213,6 +1214,12 @@ impl LocalSttApp {
                 OverlayAction::ChooseOption { task_id, value } => {
                     api::choose_option(&backend_url, t, &task_id, &value)
                         .map(|_| "Option sent".to_string())
+                }
+                OverlayAction::SubmitInput { task_id, payload_json } => {
+                    // Submit the typed answer directly via the same API that
+                    // choose_option uses — POST JSON body to /tasks/:id/submit.
+                    api::submit_input(&backend_url, t, &task_id, &payload_json)
+                        .map(|_| "Submitted".to_string())
                 }
                 _ => Ok(String::new()),
             };

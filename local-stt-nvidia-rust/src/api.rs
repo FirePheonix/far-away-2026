@@ -13,6 +13,12 @@ pub struct AiOption {
     pub value: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RequiredField {
+    pub name: String,
+    pub kind: String, // "email", "string", "url", etc.
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingTask {
     pub id: String,
@@ -21,6 +27,8 @@ pub struct PendingTask {
     pub kind: String,
     pub request_id: Option<String>,
     pub step_index: Option<i64>,
+    /// For user_input tasks: what fields to ask for.
+    pub required_fields: Vec<RequiredField>,
     /// Readable cause, present on step_failure tasks.
     pub error_message: Option<String>,
     pub error_kind: Option<String>,
@@ -118,6 +126,8 @@ struct TaskJson {
     #[serde(default)]
     step_index: Option<i64>,
     #[serde(default)]
+    required_fields: Option<Value>,
+    #[serde(default)]
     context_json: Option<Value>,
     #[serde(default)]
     wait_expires_at: Option<String>,
@@ -160,6 +170,25 @@ impl TaskJson {
 
         let situation = str_field("situation");
 
+        // Parse required_fields array: [{name, type}] from the top-level field
+        let required_fields = self.required_fields
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| {
+                        Some(RequiredField {
+                            name: f.get("name")?.as_str()?.to_string(),
+                            kind: f.get("type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("string")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         PendingTask {
             id: self.id,
             description: if self.description.trim().is_empty() {
@@ -170,6 +199,7 @@ impl TaskJson {
             kind: self.kind.unwrap_or_else(|| "user_input".into()),
             request_id: self.run_id,
             step_index: self.step_index,
+            required_fields,
             error_message: str_field("errorMessage"),
             error_kind: str_field("errorKind"),
             tool: str_field("tool"),
@@ -579,6 +609,25 @@ pub fn decide_task(
         Ok(())
     } else {
         Err(anyhow::anyhow!("Decision failed ({status})"))
+    }
+}
+
+/// Submit the user's typed answer for a user_input task.
+/// payload_json is a JSON string like `{"email":"sparsh@corp.com"}`.
+pub fn submit_input(
+    backend_url: &str,
+    token: Option<&str>,
+    task_id: &str,
+    payload_json: &str,
+) -> Result<()> {
+    let path = format!("/api/assistant/tasks/{task_id}/submit");
+    let body: Value = serde_json::from_str(payload_json)
+        .unwrap_or_else(|_| serde_json::json!({ "value": payload_json }));
+    let (status, _) = request(reqwest::Method::POST, backend_url, token, &path, Some(body))?;
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Submit failed ({status})"))
     }
 }
 

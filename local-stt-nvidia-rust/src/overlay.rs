@@ -108,6 +108,8 @@ pub enum OverlayState {
         index: usize,
         changing: bool,
         change_text: String,
+        /// Text the user is typing into a user_input field.
+        input_text: String,
         busy: bool,
         status: String,
     },
@@ -173,6 +175,12 @@ pub enum OverlayAction {
     Change {
         task_id: String,
         instruction: String,
+    },
+    /// User typed and submitted their answer to a user_input task.
+    SubmitInput {
+        task_id: String,
+        /// Map of field_name → value, JSON-encoded.
+        payload_json: String,
     },
     /// User picked one of the AI-generated propose_options choices.
     ChooseOption {
@@ -267,23 +275,25 @@ impl Overlay {
             }
             return;
         }
-        let (index, changing, change_text) = match &self.state {
+        let (index, changing, change_text, input_text) = match &self.state {
             OverlayState::Feedback {
                 index,
                 changing,
                 change_text,
+                input_text,
                 ..
             } => {
                 let idx = (*index).min(tasks.len().saturating_sub(1));
-                (idx, *changing, change_text.clone())
+                (idx, *changing, change_text.clone(), input_text.clone())
             }
-            _ => (0, false, String::new()),
+            _ => (0, false, String::new(), String::new()),
         };
         self.state = OverlayState::Feedback {
             tasks,
             index,
             changing,
             change_text,
+            input_text,
             busy: false,
             status: String::new(),
         };
@@ -435,9 +445,18 @@ impl Overlay {
     pub fn desired_height(&self) -> f32 {
         match &self.state {
             OverlayState::Result { .. } | OverlayState::Pairing { .. } => PILL_H_RESULT,
-            OverlayState::Feedback { changing, .. } => {
+            OverlayState::Feedback { changing, tasks, index, .. } => {
+                let task = tasks.get(*index);
+                let is_user_input = task.map(|t| t.kind == "user_input").unwrap_or(false);
+                let is_options = task.map(|t| t.is_options()).unwrap_or(false);
                 if *changing {
                     PILL_H_FEEDBACK + 40.0
+                } else if is_user_input {
+                    // input box + submit + voice hint
+                    PILL_H_FEEDBACK + 30.0
+                } else if is_options {
+                    let n = task.map(|t| t.ai_options.len()).unwrap_or(0);
+                    PILL_H_FEEDBACK + (n as f32 * 34.0).max(20.0)
                 } else {
                     PILL_H_FEEDBACK
                 }
@@ -594,6 +613,7 @@ impl Overlay {
             child.label(RichText::new(caption).size(11.0).color(MUTED));
             child.add_space(6.0);
             egui::ScrollArea::vertical()
+                .id_salt("result_scroll")
                 .max_height(self.max_scroll_h)
                 .auto_shrink([false, true])
                 .show(&mut child, |ui| {
@@ -829,6 +849,7 @@ impl Overlay {
             index,
             changing,
             change_text,
+            input_text,
             busy,
             status,
         } = &mut self.state
@@ -854,9 +875,16 @@ impl Overlay {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
 
+        // Header: "Needs you · 1 / N"
         child.horizontal(|ui| {
+            let kind_label = match task.kind.as_str() {
+                "user_input" => "Answer needed",
+                "confirm"    => "Confirm action",
+                "options"    => "Choose next step",
+                _            => "Needs you",
+            };
             ui.label(
-                RichText::new(format!("Needs you  ·  {} / {}", idx + 1, n))
+                RichText::new(format!("{}  ·  {} / {}", kind_label, idx + 1, n))
                     .size(11.0)
                     .color(MUTED),
             );
@@ -867,15 +895,81 @@ impl Overlay {
             });
         });
         child.add_space(8.0);
+
+        // Description / question from AI
         egui::ScrollArea::vertical()
-            .max_height(72.0)
+            .id_salt(("feedback_desc_scroll", idx))
+            .max_height(60.0)
             .auto_shrink([false, true])
             .show(&mut child, |ui| {
                 ui.label(RichText::new(&task.description).size(13.5).color(TEXT));
             });
         child.add_space(8.0);
 
-        if *changing {
+        // ── Branch on task kind ──────────────────────────────────────────────
+
+        if task.kind == "user_input" && !*changing {
+            // ── INPUT BOX — the main UX the user needs ──────────────────────
+            // Show one text field per required_field, then a Submit button.
+            // For simplicity we handle the common single-field case prominently,
+            // and stack multiple fields vertically.
+            let field_hint = task.required_fields
+                .first()
+                .map(|f| format!("Enter {}…", f.name.replace('_', " ")))
+                .unwrap_or_else(|| "Type your answer…".into());
+
+            let field_type = task.required_fields.first().map(|f| f.kind.as_str()).unwrap_or("string");
+            let _is_email = field_type == "email"
+                || task.required_fields.first().map(|f| f.name.contains("email")).unwrap_or(false);
+
+            let text_edit = egui::TextEdit::singleline(input_text)
+                .desired_width(f32::INFINITY)
+                .hint_text(&field_hint)
+                .password(field_type == "password");
+
+            let resp = child.add(text_edit);
+
+            // Submit on Enter or button press
+            let submitted = resp.lost_focus()
+                && child.input(|i| i.key_pressed(egui::Key::Enter));
+
+            child.add_space(8.0);
+            child.horizontal(|ui| {
+                let can_submit = !input_text.trim().is_empty() && !is_busy;
+                if (ui.add(action_btn("Submit", ACCENT, can_submit)).clicked() || submitted)
+                    && can_submit
+                {
+                    // Build JSON payload: { field_name: value } for single field,
+                    // or the raw text if no required_fields.
+                    let field_name = task.required_fields
+                        .first()
+                        .map(|f| f.name.as_str())
+                        .unwrap_or("value");
+                    let payload = format!("{{\"{field_name}\":\"{}\"}}", input_text.trim().replace('"', "\\\""));
+                    action = OverlayAction::SubmitInput {
+                        task_id: task.id.clone(),
+                        payload_json: payload,
+                    };
+                }
+                if ui.add(ghost_btn("Skip", !is_busy)).clicked() {
+                    action = OverlayAction::Skip {
+                        task_id: task.id.clone(),
+                        reason_code: "user_skipped".into(),
+                        note: None,
+                    };
+                }
+            });
+
+            // Also allow voice dictation hint
+            child.add_space(4.0);
+            child.label(
+                RichText::new("or speak your answer with Ctrl+Shift+Enter")
+                    .size(10.0)
+                    .color(MUTED),
+            );
+
+        } else if *changing {
+            // ── CHANGE MODE ──────────────────────────────────────────────────
             child.label(
                 RichText::new("What should change?")
                     .size(11.0)
@@ -903,11 +997,11 @@ impl Overlay {
                     change_text.clear();
                 }
             });
+
         } else if task.is_options() {
-            // ── AI-generated propose_options ──────────────────────────────────
-            // Show the AI's situation + its own dynamically generated buttons.
+            // ── AI-GENERATED OPTIONS ─────────────────────────────────────────
             if let Some(ref sit) = task.situation {
-                child.label(RichText::new(sit).size(12.0).color(MUTED));
+                child.label(RichText::new(sit).size(11.5).color(MUTED));
                 child.add_space(8.0);
             }
             for opt in &task.ai_options {
@@ -923,10 +1017,10 @@ impl Overlay {
                 });
                 child.add_space(4.0);
             }
+
         } else {
+            // ── DEFAULT: Abandon / Skip / Change / Snooze ───────────────────
             child.horizontal(|ui| {
-                // reason_code is left empty on purpose: the app routes these
-                // through the confirm/reason prompt before anything closes.
                 if ui.add(action_btn("Abandon", RED, !is_busy)).clicked() {
                     action = OverlayAction::Abandon {
                         task_id: task.id.clone(),
@@ -946,8 +1040,6 @@ impl Overlay {
                 }
             });
             child.add_space(6.0);
-            // Snooze. Capped server-side so a paused task always resumes into
-            // the same run rather than being lost.
             child.horizontal(|ui| {
                 ui.label(RichText::new("Later:").size(10.5).color(MUTED));
                 for (label, minutes) in [("15m", 15_i64), ("1h", 60), ("3h", 180), ("Tonight", 480)] {
@@ -1040,6 +1132,7 @@ impl Overlay {
         child.add_space(6.0);
 
         egui::ScrollArea::vertical()
+            .id_salt("flow_steps_scroll")
             .max_height(150.0)
             .auto_shrink([false, true])
             .show(&mut child, |ui| {
@@ -1130,6 +1223,7 @@ impl Overlay {
             };
             // Wrap long summaries — the AI can write multi-sentence completions.
             egui::ScrollArea::vertical()
+                .id_salt("flow_summary_scroll")
                 .max_height(60.0)
                 .auto_shrink([false, true])
                 .show(&mut child, |ui| {
@@ -1317,6 +1411,7 @@ impl Overlay {
         child.add_space(8.0);
 
         egui::ScrollArea::vertical()
+            .id_salt("unresolved_scroll")
             .max_height(210.0)
             .auto_shrink([false, true])
             .show(&mut child, |ui| {
