@@ -1,19 +1,32 @@
 //! Microphone and Loopback capture via cpal (resampled to 16 kHz mono).
+//!
+//! The audio callbacks run on a real-time OS thread and must NEVER block.
+//! We use crossbeam *bounded* channels: the callback sends individual f32
+//! samples lock-free via try_send(); the egui thread drains them via
+//! try_recv() each frame. The channel capacity caps memory to ~30 s of audio
+//! per stream; samples are dropped if the consumer falls behind.
 
 use anyhow::{bail, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
-use parking_lot::Mutex;
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::util::{resample_linear, SAMPLE_RATE};
 
+/// 30 seconds of 16 kHz mono = 480 000 samples per channel.
+const CHANNEL_CAP: usize = SAMPLE_RATE as usize * 30;
+
 pub struct Recorder {
     recording: Arc<AtomicBool>,
-    user_buffer: Arc<Mutex<Vec<f32>>>,
-    other_buffer: Arc<Mutex<Vec<f32>>>,
-    /// RMS * 1000 as integer for cheap cross-thread reads (combined)
+    /// Accumulated user (mic) samples drained each frame from the channel.
+    user_accum: Vec<f32>,
+    /// Accumulated other (loopback) samples.
+    other_accum: Vec<f32>,
+    user_rx: Receiver<f32>,
+    other_rx: Receiver<f32>,
+    /// RMS * 1000 as integer for cheap cross-thread reads (mic only).
     rms_milli: Arc<AtomicU32>,
     _user_stream: Stream,
     _other_stream: Option<Stream>,
@@ -22,28 +35,33 @@ pub struct Recorder {
 impl Recorder {
     pub fn new() -> Result<Self> {
         let host = cpal::default_host();
-        
+
         let recording = Arc::new(AtomicBool::new(false));
-        let user_buffer = Arc::new(Mutex::new(Vec::new()));
-        let other_buffer = Arc::new(Mutex::new(Vec::new()));
         let rms_milli = Arc::new(AtomicU32::new(0));
 
-        // 1. Setup Microphone (User)
+        let (user_tx, user_rx) = bounded::<f32>(CHANNEL_CAP);
+        let (other_tx, other_rx) = bounded::<f32>(CHANNEL_CAP);
+
+        // 1. Microphone (User)
         let mic_device = host.default_input_device().context("no default input device")?;
         let mic_conf = mic_device.default_input_config().context("default input config")?;
-        
+
         let user_stream = Self::build_stream(
             &mic_device,
             &mic_conf,
             recording.clone(),
-            user_buffer.clone(),
+            user_tx,
             rms_milli.clone(),
             true,
         )?;
         user_stream.play()?;
-        println!("[local-stt] mic ready (device {} Hz -> {} Hz)", mic_conf.sample_rate().0, SAMPLE_RATE);
+        println!(
+            "[local-stt] mic ready (device {} Hz -> {} Hz)",
+            mic_conf.sample_rate().0,
+            SAMPLE_RATE
+        );
 
-        // 2. Setup Loopback (Other)
+        // 2. Loopback (Other)
         let mut other_stream = None;
         if let Some(spk_device) = host.default_output_device() {
             if let Ok(spk_conf) = spk_device.default_output_config() {
@@ -51,19 +69,21 @@ impl Recorder {
                     &spk_device,
                     &spk_conf,
                     recording.clone(),
-                    other_buffer.clone(),
+                    other_tx,
                     rms_milli.clone(),
-                    false, // Don't let loopback dominate the visualizer RMS, although it could be mixed
+                    false,
                 ) {
                     Ok(stream) => {
                         if stream.play().is_ok() {
-                            println!("[local-stt] loopback ready (device {} Hz -> {} Hz)", spk_conf.sample_rate().0, SAMPLE_RATE);
+                            println!(
+                                "[local-stt] loopback ready (device {} Hz -> {} Hz)",
+                                spk_conf.sample_rate().0,
+                                SAMPLE_RATE
+                            );
                             other_stream = Some(stream);
                         }
                     }
-                    Err(e) => {
-                        log::warn!("failed to build loopback stream: {e}");
-                    }
+                    Err(e) => log::warn!("failed to build loopback stream: {e}"),
                 }
             }
         }
@@ -74,8 +94,10 @@ impl Recorder {
 
         Ok(Self {
             recording,
-            user_buffer,
-            other_buffer,
+            user_accum: Vec::new(),
+            other_accum: Vec::new(),
+            user_rx,
+            other_rx,
             rms_milli,
             _user_stream: user_stream,
             _other_stream: other_stream,
@@ -86,7 +108,7 @@ impl Recorder {
         device: &cpal::Device,
         conf: &cpal::SupportedStreamConfig,
         recording: Arc<AtomicBool>,
-        buffer: Arc<Mutex<Vec<f32>>>,
+        tx: Sender<f32>,
         rms_milli: Arc<AtomicU32>,
         update_rms: bool,
     ) -> Result<Stream> {
@@ -101,7 +123,7 @@ impl Recorder {
             SampleFormat::F32 => device.build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
-                    on_input(data, channels, device_rate, &recording, &buffer, &rms_milli, update_rms);
+                    on_input(data, channels, device_rate, &recording, &tx, &rms_milli, update_rms);
                 },
                 err_fn,
                 None,
@@ -110,7 +132,7 @@ impl Recorder {
                 &stream_config,
                 move |data: &[i16], _| {
                     let f: Vec<f32> = data.iter().map(|s| *s as f32 / 32768.0).collect();
-                    on_input(&f, channels, device_rate, &recording, &buffer, &rms_milli, update_rms);
+                    on_input(&f, channels, device_rate, &recording, &tx, &rms_milli, update_rms);
                 },
                 err_fn,
                 None,
@@ -118,11 +140,8 @@ impl Recorder {
             SampleFormat::U16 => device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
-                    let f: Vec<f32> = data
-                        .iter()
-                        .map(|s| (*s as f32 / 32768.0) - 1.0)
-                        .collect();
-                    on_input(&f, channels, device_rate, &recording, &buffer, &rms_milli, update_rms);
+                    let f: Vec<f32> = data.iter().map(|s| (*s as f32 / 32768.0) - 1.0).collect();
+                    on_input(&f, channels, device_rate, &recording, &tx, &rms_milli, update_rms);
                 },
                 err_fn,
                 None,
@@ -132,43 +151,57 @@ impl Recorder {
         Ok(stream)
     }
 
-    pub fn start(&self) {
-        self.user_buffer.lock().clear();
-        self.other_buffer.lock().clear();
+    pub fn start(&mut self) {
+        // Drain any stale samples from a previous session.
+        while self.user_rx.try_recv().is_ok() {}
+        while self.other_rx.try_recv().is_ok() {}
+        self.user_accum.clear();
+        self.other_accum.clear();
         self.rms_milli.store(0, Ordering::Relaxed);
         self.recording.store(true, Ordering::SeqCst);
     }
 
-    pub fn stop(&self) -> (Vec<f32>, Vec<f32>) {
+    /// Drain the channels into the accumulators. Call unconditionally every
+    /// egui frame to keep the bounded channel from filling up.
+    pub fn drain(&mut self) {
+        while let Ok(s) = self.user_rx.try_recv() {
+            self.user_accum.push(s);
+        }
+        while let Ok(s) = self.other_rx.try_recv() {
+            self.other_accum.push(s);
+        }
+    }
+
+    /// Stop recording and return all buffered audio. Non-blocking.
+    pub fn stop(&mut self) -> (Vec<f32>, Vec<f32>) {
         self.recording.store(false, Ordering::SeqCst);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let user = std::mem::take(&mut *self.user_buffer.lock());
-        let other = std::mem::take(&mut *self.other_buffer.lock());
+        // Drain whatever the callbacks already sent before the flag propagated.
+        self.drain();
+        let user = std::mem::take(&mut self.user_accum);
+        let other = std::mem::take(&mut self.other_accum);
         (user, other)
     }
 
     pub fn buffered_user(&self) -> usize {
-        self.user_buffer.lock().len()
+        self.user_accum.len()
     }
 
     pub fn buffered_other(&self) -> usize {
-        self.other_buffer.lock().len()
+        self.other_accum.len()
     }
 
-    pub fn take_prefix_user(&self, n: usize) -> Option<Vec<f32>> {
-        let mut buf = self.user_buffer.lock();
-        if buf.len() < n {
+    pub fn take_prefix_user(&mut self, n: usize) -> Option<Vec<f32>> {
+        if self.user_accum.len() < n {
             return None;
         }
-        Some(buf.drain(..n).collect())
+        Some(self.user_accum.drain(..n).collect())
     }
 
-    pub fn take_prefix_other(&self, n: usize) -> Option<Vec<f32>> {
-        let mut buf = self.other_buffer.lock();
-        if buf.len() < n {
+    pub fn take_prefix_other(&mut self, n: usize) -> Option<Vec<f32>> {
+        if self.other_accum.len() < n {
             return None;
         }
-        Some(buf.drain(..n).collect())
+        Some(self.other_accum.drain(..n).collect())
     }
 
     pub fn rms(&self) -> f32 {
@@ -176,27 +209,31 @@ impl Recorder {
     }
 }
 
+/// Called from the real-time audio thread — MUST NOT block.
+/// Sends resampled mono f32 samples via try_send() (non-blocking).
+/// Samples are silently dropped if the channel is full (consumer too slow).
 fn on_input(
     data: &[f32],
     channels: u16,
     device_rate: u32,
     recording: &AtomicBool,
-    buffer: &Mutex<Vec<f32>>,
+    tx: &Sender<f32>,
     rms_milli: &AtomicU32,
     update_rms: bool,
 ) {
-    let mono_preview: Vec<f32> = if channels <= 1 {
+    // Down-mix to mono.
+    let mono: Vec<f32> = if channels <= 1 {
         data.to_vec()
     } else {
         data.chunks(channels as usize)
             .map(|c| c.iter().sum::<f32>() / channels as f32)
             .collect()
     };
-    
-    if update_rms && !mono_preview.is_empty() {
-        let mean_sq = mono_preview.iter().map(|s| s * s).sum::<f32>() / mono_preview.len() as f32;
+
+    // RMS for the visualiser — always update so the pulsing circle is live.
+    if update_rms && !mono.is_empty() {
+        let mean_sq = mono.iter().map(|s| s * s).sum::<f32>() / mono.len() as f32;
         let rms = mean_sq.sqrt();
-        // cheap moving average for RMS smoothing
         let old = rms_milli.load(Ordering::Relaxed);
         let new_val = (rms * 1000.0) as u32;
         let blended = if old > 0 { (old * 3 + new_val) / 4 } else { new_val };
@@ -207,6 +244,14 @@ fn on_input(
         return;
     }
 
-    let resampled = resample_linear(&mono_preview, device_rate, SAMPLE_RATE);
-    buffer.lock().extend_from_slice(&resampled);
+    // Resample to 16 kHz and send each sample. try_send never blocks;
+    // if the channel is full we drop the sample (bounded back-pressure).
+    let resampled = resample_linear(&mono, device_rate, SAMPLE_RATE);
+    for s in resampled {
+        if tx.try_send(s).is_err() {
+            // Channel full — consumer is behind. Drop silently.
+            // log::warn is not safe to call from a real-time thread.
+            break;
+        }
+    }
 }

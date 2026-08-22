@@ -1,4 +1,9 @@
 //! Parakeet TDT v3 INT8 via sherpa-onnx.
+//!
+//! The `OfflineRecognizer` C FFI type is NOT guaranteed thread-safe by the
+//! sherpa-onnx documentation, so we protect it with a Mutex. Each live chunk
+//! thread blocks until the previous inference finishes — acceptable because
+//! inference already takes seconds and CPU throughput is the real bottleneck.
 
 use anyhow::{bail, Context, Result};
 use parking_lot::Mutex;
@@ -18,6 +23,7 @@ pub struct Segment {
 }
 
 pub struct AsrEngine {
+    /// Mutex guards the C-side recognizer whose thread-safety is unverified.
     recognizer: Mutex<OfflineRecognizer>,
     #[allow(dead_code)]
     paths: ModelPaths,

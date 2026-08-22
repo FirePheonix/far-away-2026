@@ -1,16 +1,26 @@
 //! Download & extract the sherpa-onnx Parakeet TDT v3 INT8 model pack.
+//!
+//! # Security
+//! The archive is verified against a hardcoded SHA-256 digest before extraction.
+//! The tar extractor explicitly rejects path-traversal entries (`..'` components
+//! and absolute paths) so a tampered archive cannot write outside `dest_dir`.
 
 use anyhow::{bail, Context, Result};
 use bzip2::read::BzDecoder;
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Write};
+use std::path::{Component, Path, PathBuf};
 use tar::Archive;
 
 use crate::config::models_dir;
 
 pub const MODEL_DIR_NAME: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
+
+/// SHA-256 of the official release archive (lowercase hex).
+/// Recompute with: sha256sum sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+const MODEL_SHA256: &str = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf";
 
 #[derive(Debug, Clone)]
 pub struct ModelPaths {
@@ -63,6 +73,11 @@ pub fn ensure_parakeet_int8() -> Result<ModelPaths> {
         println!("[local-stt] download complete");
     }
 
+    // Verify checksum before extraction to detect MITM / corruption.
+    println!("[local-stt] verifying model archive checksum...");
+    verify_sha256(&archive_path, MODEL_SHA256)?;
+    println!("[local-stt] checksum OK");
+
     log::info!("extracting {}", archive_path.display());
     println!("[local-stt] extracting model...");
     extract_tar_bz2(&archive_path, &models_dir())?;
@@ -112,12 +127,51 @@ fn download_file(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Compute SHA-256 of `path` and compare against `expected` (lowercase hex).
+fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
+    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected {
+        bail!(
+            "model archive checksum mismatch — possible corruption or MITM.\n\
+             expected: {expected}\n\
+             got:      {actual}\n\
+             Delete {} and retry.",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Extract a `.tar.bz2` archive into `dest_dir`, rejecting any entry whose
+/// path contains `..` components or is absolute (path-traversal defence).
 fn extract_tar_bz2(archive_path: &Path, dest_dir: &Path) -> Result<()> {
-    let file = File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let file =
+        File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
     let decoder = BzDecoder::new(file);
     let mut archive = Archive::new(decoder);
-    archive
-        .unpack(dest_dir)
-        .with_context(|| format!("unpack into {}", dest_dir.display()))?;
+
+    for entry in archive.entries().context("read tar entries")? {
+        let mut entry = entry.context("read tar entry")?;
+        let entry_path = entry.path().context("tar entry path")?.into_owned();
+
+        // Reject absolute paths and any `..` component.
+        if entry_path.is_absolute()
+            || entry_path
+                .components()
+                .any(|c| c == Component::ParentDir)
+        {
+            bail!(
+                "archive contains dangerous path entry: {:?} — aborting extraction",
+                entry_path
+            );
+        }
+
+        entry
+            .unpack_in(dest_dir)
+            .with_context(|| format!("unpack {:?}", entry_path))?;
+    }
     Ok(())
 }

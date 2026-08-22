@@ -23,6 +23,8 @@ parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
 # Shared libs avoid MSVC /MT vs /MD link conflicts on Windows static builds.
 sherpa-onnx = { version = "1.13", default-features = false, features = ["shared"] }
 tar = "0.4"

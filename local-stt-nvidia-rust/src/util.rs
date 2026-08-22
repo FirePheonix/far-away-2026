@@ -47,7 +47,7 @@ pub fn trim_silence(audio: &[f32], sample_rate: u32, top_db: f32, pad_ms: u32) -
 
 /// Simple linear resampler to 16 kHz mono float32.
 pub fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == 0 || input.is_empty() {
+    if from_rate == 0 || to_rate == 0 || input.is_empty() {
         return Vec::new();
     }
     if from_rate == to_rate {
@@ -134,6 +134,9 @@ fn fill_rect(img: &mut RgbaImage, x: i32, y: i32, w: i32, h: i32, c: Rgba<u8>) {
 }
 
 fn fill_ellipse(img: &mut RgbaImage, cx: i32, cy: i32, rx: i32, ry: i32, c: Rgba<u8>) {
+    if rx == 0 || ry == 0 {
+        return;
+    }
     let (iw, ih) = (img.width() as i32, img.height() as i32);
     for yy in (cy - ry)..(cy + ry + 1) {
         for xx in (cx - rx)..(cx + rx + 1) {
