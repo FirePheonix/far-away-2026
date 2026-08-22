@@ -22,7 +22,8 @@ export type ToolName =
   | "obsidian.search_notes"
   | "obsidian.append_to_note"
   | "obsidian.write_daily_note"
-  | "request_user_input";
+  | "request_user_input"
+  | "kb_update";
 
 export interface PlannedAction {
   tool: ToolName;

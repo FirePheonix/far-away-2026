@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { env } from "../config/env.js";
 import { supabaseAdmin } from "../config/supabase.js";
+import { buildKbContext } from "./knowledge-base.service.js";
 
 const openai = new OpenAI({
   apiKey: env.OPENAI_API_KEY ?? "missing-key",
@@ -190,12 +191,19 @@ export async function buildMemoryContext(
 ): Promise<string> {
   if (!clerkUserId) return "";
 
-  const [memories, contacts] = await Promise.all([
+  const [memories, contacts, kbContext] = await Promise.all([
     searchMemory(clerkUserId, transcript),
     recallContacts(clerkUserId),
+    buildKbContext(clerkUserId),
   ]);
 
   const sections: string[] = [];
+
+  // KB comes first — it is the most authoritative source and the planner
+  // must use it before falling back to contacts or past memories.
+  if (kbContext) {
+    sections.push(kbContext);
+  }
 
   if (contacts.length > 0) {
     const lines = contacts

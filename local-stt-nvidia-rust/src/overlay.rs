@@ -8,6 +8,19 @@
 use crate::api::{PendingTask, ReasonChip, Trace};
 use egui::{self, Color32, CornerRadius, Pos2, Rect, RichText, Sense, Shape, Stroke, Vec2};
 
+/// A completed run entry kept in the session history sidebar.
+#[derive(Debug, Clone)]
+pub struct SessionEntry {
+    /// Short first ~60 chars of the transcript.
+    pub transcript: String,
+    /// "completed" | "failed" | "abandoned"
+    pub status: String,
+    /// Human-readable summary or error.
+    pub message: String,
+    /// How many steps ran.
+    pub steps: usize,
+}
+
 /// Collapsed notch height (logical px), not counting the top-edge flares.
 pub const PILL_H: f32 = 56.0;
 /// Notch width when idle / listening.
@@ -179,6 +192,9 @@ pub struct Overlay {
     pub max_scroll_h: f32,
     /// Reason vocabulary from the backend, with a usable local fallback.
     pub reason_chips: Vec<ReasonChip>,
+    /// Completed/failed/abandoned runs from this session, newest-first.
+    /// Shown in a compact right-side panel so the user can see what already ran.
+    pub session_history: Vec<SessionEntry>,
     dismiss_at: Option<f64>,
     phase: f32,
 }
@@ -192,6 +208,7 @@ impl Default for Overlay {
             screen_w: 1920.0,
             max_scroll_h: 160.0,
             reason_chips: default_reason_chips(),
+            session_history: Vec::new(),
             dismiss_at: None,
             phase: 0.0,
         }
@@ -397,6 +414,12 @@ impl Overlay {
         self.state = OverlayState::Hidden;
         self.dismiss_at = None;
     }
+
+    /// Record a settled run into the session history sidebar (newest-first, cap 20).
+    pub fn push_session_entry(&mut self, entry: SessionEntry) {
+        self.session_history.insert(0, entry);
+        self.session_history.truncate(20);
+    }
     /// Auto-hide after a delay. Used once a run reaches a terminal state.
     pub fn arm_dismiss(&mut self, now: f64, secs: f64) {
         self.dismiss_at = Some(now + secs);
@@ -597,6 +620,10 @@ impl Overlay {
                 action = OverlayAction::OpenPairUrl { url };
             }
         }
+
+        // Right-side session history panel — always drawn when there is history,
+        // independent of the main notch state.
+        self.draw_session_panel(ui, canvas);
 
         if let Some(keyed) = self.handle_keys(ctx) {
             action = keyed;

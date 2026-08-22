@@ -77,7 +77,12 @@ function actionsForFailure(error: NormalizedToolError, canRetry: boolean): strin
 export const assistantWorkflow = inngest.createFunction(
   {
     id: "assistant-voice-workflow",
-    retries: MAX_STEP_RETRIES,
+    // Retries disabled at the function level. Retrying the whole workflow after
+    // a tool error causes the overlay to loop ("retry 1 / retry 2…") because
+    // Inngest re-runs every step from the start, including ones with side-effects
+    // already executed. Individual steps can be retried from the UI via the
+    // Skip/Retry/Abandon buttons instead.
+    retries: 0,
     // Kill the whole workflow if the dashboard sends a run_abandoned event
     // whose data.requestId matches the triggering event's data.requestId.
     cancelOn: [
@@ -85,6 +90,8 @@ export const assistantWorkflow = inngest.createFunction(
         event: ASSISTANT_EVENTS.runAbandoned,
         match: "data.requestId",
       },
+    ],
+  },
     ],
     // Reached only when the function itself dies — a planner outage, a bad
     // deploy, an unhandled throw. Cancellations do not come through here,

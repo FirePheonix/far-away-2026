@@ -18,6 +18,7 @@ import { githubTool } from "./github.tool.js";
 import { notionTool } from "./notion.tool.js";
 import { pendingTaskTool } from "./pending-task.tool.js";
 import { obsidianTools } from "./obsidian.tool.js";
+import { kbUpdateTool } from "./kb-update.tool.js";
 import type { AnyToolDefinition, ToolMetadata } from "./types.js";
 import { createExecutionContext } from "../utils/context.js";
 
@@ -32,6 +33,7 @@ const allTools: AnyToolDefinition[] = [
   notionTool,
   ...obsidianTools,
   pendingTaskTool,
+  kbUpdateTool,
 ];
 
 export const toolRegistry = Object.fromEntries(

@@ -850,6 +850,15 @@ impl LocalSttApp {
         if self.overlay.is_collecting_closure() {
             return;
         }
+        // If the flow view is showing pending tasks (step failure handback or
+        // user-input request), the user must make a decision before anything
+        // changes server-side. Stop hammering the trace endpoint — it would
+        // only cause the buttons to flicker under their fingers.
+        if let OverlayState::Flow { ref trace, .. } = self.overlay.state {
+            if !trace.tasks.is_empty() {
+                return;
+            }
+        }
         if self.last_trace_poll.elapsed().as_millis() < 1200 {
             return;
         }
@@ -901,10 +910,18 @@ impl LocalSttApp {
 
         self.overlay.show_flow(trace);
 
-        // Stop polling once nothing more can change without the user acting.
-        if settled && !waiting {
+        if settled {
+            // Always clear the active request once the run reaches a terminal
+            // state so the user can immediately fire a new command. Previously
+            // this was guarded by `!waiting` which kept the request locked
+            // forever if tasks were still listed after a failed/abandoned run.
             self.active_request = None;
-            self.overlay.arm_dismiss(self.now(), 10.0);
+            if !waiting {
+                // Nothing left to do — auto-dismiss after a short pause.
+                self.overlay.arm_dismiss(self.now(), 6.0);
+            }
+            // If `waiting` is still true (e.g. stale tasks after abandonment)
+            // the user can dismiss manually with Escape or the ✕ button.
         }
     }
 
