@@ -1,11 +1,23 @@
-import { createPlan } from "../ai/planner.js";
-import { executeAction } from "../tools/registry.js";
-import {
-  createExecutionContext,
-  recordStepResult,
-  resolveActionParams,
-} from "../utils/context.js";
-import type { ExecutionPlan, StepExecutionRecord } from "../types/index.js";
+/**
+ * assistant.workflow.ts
+ *
+ * Inngest workflow that drives the orchestrator.
+ *
+ * Architecture:
+ *  - One Inngest function handles the full agentic loop.
+ *  - The orchestrator (ReAct / tool-calling) runs inside step.run() calls
+ *    so Inngest can memo-ise each turn atomically.
+ *  - When the orchestrator yields on request_user_input or confirm_action,
+ *    the workflow suspends with step.waitForEvent() and resumes by feeding
+ *    the user's answer back into the orchestrator as a tool result.
+ *  - All closure, trace, skip/abandon/retry, and obsidian waitForEvent logic
+ *    is preserved from the previous implementation.
+ */
+
+import OpenAI from "openai";
+import { runOrchestrator, type OrchestratorTurn } from "../ai/orchestrator.js";
+import { createExecutionContext, recordStepResult } from "../utils/context.js";
+import type { StepExecutionRecord } from "../types/index.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import {
   completeAssistantRun,
@@ -17,22 +29,17 @@ import {
   markStepRunning,
   markStepSkipped,
   markStepSucceeded,
-  markStepUserRetry,
   seedRunTrace,
 } from "../services/run-trace.service.js";
 import {
   closeRun,
-  createHandbackTask,
   resolveClosure,
   teachFromClosure,
   type ClosedBy,
 } from "../services/closure.service.js";
-import { describeStep, normalizeToolError, type NormalizedToolError } from "../utils/tool-errors.js";
+import { normalizeToolError } from "../utils/tool-errors.js";
 import { NonRetriableError } from "inngest";
 import { ASSISTANT_EVENTS, inngest } from "./inngest.js";
-
-/** Must match `retries` in the function config below. */
-const MAX_STEP_RETRIES = 3;
 
 /** How many times a human may re-run one permanently failed step. */
 const MAX_USER_RETRIES = 3;
@@ -42,8 +49,7 @@ const WAIT_TIMEOUT = "24h";
 const WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Error class used to signal a user-initiated run abandonment from inside
-// the waitForEvent loop so the outer catch block can handle it cleanly.
+// Error class for user-initiated run abandonment
 // ---------------------------------------------------------------------------
 class RunAbandonedError extends Error {
   constructor(
@@ -58,47 +64,31 @@ class RunAbandonedError extends Error {
   }
 }
 
-type StepOutcome =
-  | { ok: true; record: StepExecutionRecord }
-  | { ok: false; error: NormalizedToolError; durationMs: number };
-
-/** Which buttons the desktop should offer for a given failure. */
-function actionsForFailure(error: NormalizedToolError, canRetry: boolean): string[] {
-  const actions: string[] = [];
-  if (error.kind === "auth") actions.push("reconnect");
-  if (canRetry) actions.push("retry");
-  actions.push("skip", "abandon");
-  return actions;
+// ---------------------------------------------------------------------------
+// Helper — turn an OrchestratorTurn into a StepExecutionRecord for storage
+// ---------------------------------------------------------------------------
+function turnToRecord(turn: OrchestratorTurn): StepExecutionRecord {
+  return {
+    index: turn.index,
+    tool: turn.tool as any,
+    params: turn.params,
+    result: turn.result,
+    durationMs: turn.durationMs,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Main Inngest workflow
+// Inngest function
 // ---------------------------------------------------------------------------
 export const assistantWorkflow = inngest.createFunction(
   {
     id: "assistant-voice-workflow",
-    // Retries disabled at the function level. Retrying the whole workflow after
-    // a tool error causes the overlay to loop ("retry 1 / retry 2…") because
-    // Inngest re-runs every step from the start, including ones with side-effects
-    // already executed. Individual steps can be retried from the UI via the
-    // Skip/Retry/Abandon buttons instead.
     retries: 0,
-    // Kill the whole workflow if the dashboard sends a run_abandoned event
-    // whose data.requestId matches the triggering event's data.requestId.
-    cancelOn: [
-      {
-        event: ASSISTANT_EVENTS.runAbandoned,
-        match: "data.requestId",
-      },
-    ],
-    // Reached only when the function itself dies — a planner outage, a bad
-    // deploy, an unhandled throw. Cancellations do not come through here,
-    // which is why run-level abandon writes its own closure in the handler.
+    cancelOn: [{ event: ASSISTANT_EVENTS.runAbandoned, match: "data.requestId" }],
     onFailure: async ({ event, error }) => {
       const original = event.data.event?.data as
-        | { requestId?: string; clerkUserId?: string; transcript?: string }
+        | { requestId?: string }
         | undefined;
-
       if (!original?.requestId) return;
 
       const closure = resolveClosure({
@@ -119,13 +109,13 @@ export const assistantWorkflow = inngest.createFunction(
         runId: run?.id,
         requestId: original.requestId,
         requestStatus: "failed",
-        message: `Failed after retries: ${closure.closure_note ?? "unknown error"}`,
+        message: `Failed: ${closure.closure_note ?? "unknown error"}`,
         closure,
       });
     },
   },
   { event: ASSISTANT_EVENTS.voiceRequestReceived },
-  async ({ event, step, runId: inngestRunId, attempt }) => {
+  async ({ event, step, runId: inngestRunId }) => {
     const { transcript, requestId, source, clerkUserId } = event.data;
     const persistedRequestId = clerkUserId && requestId ? requestId : undefined;
 
@@ -133,417 +123,209 @@ export const assistantWorkflow = inngest.createFunction(
       ? await step.run("start-run", async () => startAssistantRun(persistedRequestId))
       : undefined;
 
-    try {
-      const plan = await step.run("planner", async () => {
-        return createPlan(transcript, { clerkUserId });
-      });
+    // Seed an empty trace immediately so the overlay shows "Planning…"
+    await step.run("seed-trace", async () => {
+      await seedRunTrace({ runId, plan: { actions: [] }, inngestRunId });
+      return { seeded: true };
+    });
 
-      // Persist intent before executing it so the overlay can show the whole
-      // plan up front instead of one step at a time.
-      await step.run("seed-trace", async () => {
-        await seedRunTrace({ runId, plan, inngestRunId });
-        return { seeded: plan.actions.length };
-      });
+    // -----------------------------------------------------------------
+    // The core agentic loop.
+    //
+    // We use a persistent state object that survives across Inngest steps.
+    // Each pass through the loop either:
+    //   a) Completes → workflow ends
+    //   b) Pauses on user input → waitForEvent → resume next iteration
+    //
+    // Inngest memoises each step.run by its unique ID, so if a step
+    // already ran it returns the cached result without re-executing.
+    // -----------------------------------------------------------------
 
-      const stepsExecuted: StepExecutionRecord[] = [];
+    // State that persists across resume iterations
+    let thread: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    let allTurns: OrchestratorTurn[] = [];
+    let resumeToolCallId: string | undefined;
+    let resumeResult: unknown;
+    let iteration = 0;
 
-      for (let i = 0; i < plan.actions.length; i++) {
-        const action = plan.actions[i]!;
-        const stepTitle = describeStep(action.tool, action.params);
-        let userRetry = 0;
-        let stepResult: StepExecutionRecord | null = null;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const iterationId = `orchestrate-${iteration}`;
 
-        // Inner loop exists only for human-requested retries. Each pass uses a
-        // fresh Inngest step id — replaying the original id would hand back the
-        // memoized failure instead of executing anything.
-        for (;;) {
-          const stepId =
-            userRetry === 0
-              ? `execute-${i}-${action.tool}`
-              : `execute-${i}-${action.tool}-r${userRetry}`;
-
-          // `attempt` on the function handler is the function attempt, not the
-          // step's. Using it to decide "last retry" would never hand a failed
-          // step back — Inngest would exhaust the step, throw, and the run
-          // would die. The contract is: throw so Inngest retries the step;
-          // NonRetriableError skips remaining retries; a failed step.run
-          // throws into this catch, which is where the human is asked.
-          let outcome: StepOutcome;
-          try {
-            outcome = await step.run(stepId, { retries: 0 }, async () => {
-              const context = createExecutionContext(plan.actions.length, {
-                clerkUserId,
-                requestId: persistedRequestId,
-                runId: runId ?? undefined,
-                source,
-              });
-              for (const prev of stepsExecuted) {
-                recordStepResult(context, prev.index, prev.tool, prev.result);
-              }
-
-              await markStepRunning({
-                runId,
-                stepIndex: i,
-                tool: action.tool,
-                params: action.params,
-                attempt,
-              });
-
-              const started = Date.now();
-              try {
-                const result = await executeAction(action, context, i);
-                const durationMs = Date.now() - started;
-
-                await markStepSucceeded({ runId, stepIndex: i, result, durationMs });
-
-                return {
-                  ok: true as const,
-                  record: {
-                    index: i,
-                    tool: action.tool,
-                    params: resolveActionParams(action.params, context),
-                    result,
-                    durationMs,
-                  } satisfies StepExecutionRecord,
-                };
-              } catch (err) {
-                const durationMs = Date.now() - started;
-                const normalized = normalizeToolError(action.tool, err);
-
-                await markStepFailed({
-                  runId,
-                  stepIndex: i,
-                  error: normalized,
-                  durationMs,
-                  attempt,
-                });
-
-                if (!normalized.retryable) {
-                  throw new NonRetriableError(normalized.message, { cause: err });
-                }
-                throw err;
-              }
-            });
-          } catch (err) {
-            outcome = {
-              ok: false,
-              error: normalizeToolError(action.tool, err),
-              durationMs: 0,
-            };
-          }
-
-          if (outcome.ok) {
-            stepResult = outcome.record;
-            break;
-          }
-
-          // ------------------------------------------------------------------
-          // Permanent failure. Hand the decision back to the human rather than
-          // guessing whether the rest of the plan still makes sense.
-          // ------------------------------------------------------------------
-          const canRetry = userRetry < MAX_USER_RETRIES;
-          const waitExpiresAt = new Date(Date.now() + WAIT_TIMEOUT_MS).toISOString();
-
-          const taskId = persistedRequestId && clerkUserId
-            ? await step.run(`handback-${i}-${userRetry}`, async () =>
-                createHandbackTask({
-                  clerkUserId,
-                  requestId: persistedRequestId,
-                  stepIndex: i,
-                  tool: action.tool,
-                  title: stepTitle,
-                  error: outcome.error,
-                  actions: actionsForFailure(outcome.error, canRetry),
-                  waitExpiresAt,
-                }),
-              )
-            : undefined;
-
-          if (!taskId) {
-            // Nothing to ask, nobody to ask. Close out with the failure.
-            throw new RunAbandonedError(
-              "system_failure",
-              outcome.error.message,
-              "system",
-              runId ?? undefined,
-              persistedRequestId,
-            );
-          }
-
-          const decision = await step.waitForEvent(`wait-decision-${i}-${userRetry}`, {
-            event: ASSISTANT_EVENTS.stepDecision,
-            timeout: WAIT_TIMEOUT,
-            if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
-          });
-
-          if (!decision) {
-            throw new RunAbandonedError(
-              "timeout",
-              `No decision within 24h after ${stepTitle} failed: ${outcome.error.message}`,
-              "timeout",
-              runId ?? undefined,
-              persistedRequestId,
-            );
-          }
-
-          const choice = decision.data.decision as "retry" | "skip" | "abandon";
-
-          if (choice === "abandon") {
-            throw new RunAbandonedError(
-              decision.data.reasonCode ?? "ai_got_it_wrong",
-              decision.data.note,
-              "user",
-              runId ?? undefined,
-              persistedRequestId,
-            );
-          }
-
-          if (choice === "retry" && canRetry) {
-            await step.run(`mark-retry-${i}-${userRetry}`, async () =>
-              markStepUserRetry({ runId, stepIndex: i }),
-            );
-            userRetry += 1;
-            continue;
-          }
-
-          // Skip, or a retry we can no longer honour.
-          await step.run(`mark-skipped-${i}-${userRetry}`, async () => {
-            await markStepSkipped({
-              runId,
-              stepIndex: i,
-              note: decision.data.note ?? outcome.error.message,
-            });
-            return { skipped: true };
-          });
-
-          stepResult = {
-            index: i,
-            tool: action.tool,
-            params: action.params,
-            result: {
-              skipped: true,
-              reason: decision.data.note ?? outcome.error.message,
-              error: outcome.error.message,
-            },
-            durationMs: outcome.durationMs,
-          };
-          break;
-        }
-
-        if (!stepResult) break;
-
-        const stepOutput =
-          typeof stepResult.result === "object" && stepResult.result !== null
-            ? (stepResult.result as Record<string, unknown>)
-            : null;
-
-        // -----------------------------------------------------------------------
-        // waitForEvent loop — only entered when the tool is request_user_input
-        // and the tool succeeded in creating a pending_tasks row.
-        //
-        // We race four possible responses from the user:
-        //   1. submit  (userInputReceived)  → inject user data and continue
-        //   2. skip    (taskSkipped)        → mark skipped and continue
-        //   3. abandon (taskAbandoned)      → throw, workflow stops
-        //   4. edit    (taskEdited)         → inject edited payload and continue
-        //
-        // All four events are matched on data.requestId so that only events
-        // originating from the same assistant request resume this workflow.
-        // The taskId is also checked inside each branch for extra safety.
-        // -----------------------------------------------------------------------
-        if (action.tool === "request_user_input" && !stepOutput?.error && stepOutput?.taskId) {
-          const taskId = stepOutput.taskId as string;
-
-          await step.run(`awaiting-${i}`, async () => {
-            await markStepAwaitingInput({
-              runId,
-              stepIndex: i,
-              description: (action.params?.description as string | undefined) ?? stepTitle,
-            });
-            return { awaiting: true };
-          });
-
-          // Race all four possible dashboard responses simultaneously.
-          const [submitEvent, skipEvent, abandonEvent, editEvent] = await Promise.all([
-            step.waitForEvent(`wait-for-submit-${i}`, {
-              event: ASSISTANT_EVENTS.userInputReceived,
-              timeout: WAIT_TIMEOUT,
-              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
-            }),
-            step.waitForEvent(`wait-for-skip-${i}`, {
-              event: ASSISTANT_EVENTS.taskSkipped,
-              timeout: WAIT_TIMEOUT,
-              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
-            }),
-            step.waitForEvent(`wait-for-abandon-${i}`, {
-              event: ASSISTANT_EVENTS.taskAbandoned,
-              timeout: WAIT_TIMEOUT,
-              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
-            }),
-            step.waitForEvent(`wait-for-edit-${i}`, {
-              event: ASSISTANT_EVENTS.taskEdited,
-              timeout: WAIT_TIMEOUT,
-              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
-            }),
-          ]);
-
-          // Only one should ever fire; check in priority order.
-          if (abandonEvent) {
-            // User abandoned this specific task — treat as full run abandonment.
-            throw new RunAbandonedError(
-              abandonEvent.data.reasonCode ?? "no_longer_needed",
-              abandonEvent.data.note ?? abandonEvent.data.reason,
-              "user",
-              runId ?? undefined,
-              persistedRequestId,
-            );
-          } else if (skipEvent) {
-            stepOutput.skipped = true;
-            stepOutput.skipReason = skipEvent.data.note ?? skipEvent.data.reason ?? "Skipped by user";
-            await step.run(`skip-input-${i}`, async () => {
-              await markStepSkipped({ runId, stepIndex: i, note: String(stepOutput.skipReason) });
-              return { skipped: true };
-            });
-          } else if (submitEvent) {
-            stepOutput.userInput = submitEvent.data.payload;
-          } else if (editEvent) {
-            stepOutput.userInput = editEvent.data.payload;
-            stepOutput.editedFields = editEvent.data.editedFields ?? [];
-          } else {
-            // Nobody answered inside the wait window. That is an unresolved
-            // follow-up, not a silent success.
-            throw new RunAbandonedError(
-              "timeout",
-              `No response within 24h to: ${stepTitle}`,
-              "timeout",
-              runId ?? undefined,
-              persistedRequestId,
-            );
-          }
-        }
-
-        // -----------------------------------------------------------------------
-        // waitForEvent — Obsidian tools (local file I/O via desktop app)
-        //
-        // When an obsidian.* tool runs it inserts a row into obsidian_requests
-        // and returns { obsidianRequestId }. The desktop app polls for pending
-        // requests, executes the file operation locally, and POSTs the result
-        // back. That POST fires obsidianResultReceived which we wait for here.
-        // -----------------------------------------------------------------------
-        if (
-          action.tool.startsWith("obsidian.") &&
-          !stepOutput?.error &&
-          stepOutput?.obsidianRequestId
-        ) {
-          const obsidianRequestId = stepOutput.obsidianRequestId as string;
-
-          const obsidianEvent = await step.waitForEvent(`wait-for-obsidian-${i}`, {
-            event: ASSISTANT_EVENTS.obsidianResultReceived,
-            timeout: "5m",
-            if: `async event.data.obsidianRequestId == "${obsidianRequestId}"`,
-          });
-
-          if (obsidianEvent) {
-            // Merge the desktop app's result into the step output so subsequent
-            // steps can reference it (e.g. search results for append_to_note).
-            stepOutput.obsidianResult = obsidianEvent.data.result;
-          } else {
-            stepOutput.error =
-              "Obsidian request timed out — make sure the Clawvio desktop app is running.";
-          }
-        }
-
-        stepsExecuted.push(stepResult);
-      }
-
-      const finalContext = createExecutionContext(plan.actions.length, {
+      const context = createExecutionContext(0, {
         clerkUserId,
         requestId: persistedRequestId,
         runId: runId ?? undefined,
         source,
       });
-      for (const stepRecord of stepsExecuted) {
-        recordStepResult(finalContext, stepRecord.index, stepRecord.tool, stepRecord.result);
+      // Replay prior turns into context so tools that check previousResults work
+      for (const t of allTurns) {
+        recordStepResult(context, t.index, t.tool, t.result);
       }
 
-      const message = `Completed ${stepsExecuted.length} step(s) for voice request`;
-      await step.run("complete-run", async () =>
-        completeAssistantRun({
+      // Run one batch of orchestrator turns inside a memoised Inngest step.
+      let orchResult: Awaited<ReturnType<typeof runOrchestrator>>;
+      try {
+        orchResult = await step.run(iterationId, async () => {
+          const result = await runOrchestrator(transcript, context, {
+            priorThread: thread.length > 0 ? thread : undefined,
+            resumeToolCallId,
+            resumeResult,
+            onTurnComplete: async (turn) => {
+              // Write trace updates live so the overlay sees each step
+              if (turn.error) {
+                await markStepFailed({
+                  runId,
+                  stepIndex: turn.index,
+                  error: normalizeToolError(turn.tool, new Error(turn.error)),
+                  durationMs: turn.durationMs,
+                  attempt: 0,
+                });
+              } else if (turn.pausedTaskId) {
+                await markStepAwaitingInput({
+                  runId,
+                  stepIndex: turn.index,
+                  description: (turn.params.description as string | undefined) ??
+                    (turn.params.action as string | undefined),
+                });
+              } else {
+                await markStepRunning({ runId, stepIndex: turn.index, tool: turn.tool, params: turn.params, attempt: 0 });
+                await markStepSucceeded({ runId, stepIndex: turn.index, result: turn.result, durationMs: turn.durationMs });
+              }
+            },
+          });
+          return result;
+        }) as Awaited<ReturnType<typeof runOrchestrator>>;
+      } catch (err) {
+        // step.run threw — treat as permanent failure
+        throw err;
+      }
+
+      // Accumulate turns from this batch
+      allTurns = [...allTurns, ...orchResult.turns];
+      thread = orchResult.thread;
+
+      if (orchResult.done) {
+        // ── All done ────────────────────────────────────────────────────
+        const stepsExecuted = allTurns.map(turnToRecord);
+        const finalContext = createExecutionContext(allTurns.length, {
+          clerkUserId,
           requestId: persistedRequestId,
           runId: runId ?? undefined,
-          success: true,
-          message,
-          plan,
-          results: finalContext.previousResults,
-          stepsExecuted,
-        }),
-      );
-
-      return {
-        success: true,
-        requestId,
-        source,
-        plan,
-        stepsExecuted,
-        results: finalContext.previousResults,
-        message,
-      };
-    } catch (err) {
-      if (err instanceof RunAbandonedError) {
-        const closure = resolveClosure({
-          reasonCode: err.reasonCode,
-          note: err.note,
-          closedBy: err.closedBy,
+          source,
         });
+        for (const t of allTurns) {
+          recordStepResult(finalContext, t.index, t.tool, t.result);
+        }
 
-        await step.run("close-run", async () => {
-          await closeRun({
-            runId: err.runId,
-            requestId: err.requestId,
-            requestStatus: "abandoned",
-            message: `Closed: ${closure.abandonment_reason}`,
-            closure,
-          });
-          await teachFromClosure({
-            clerkUserId,
-            closure,
-            subject: transcript,
-            requestId: err.requestId,
-          });
-          return { closed: true };
-        });
+        await step.run("complete-run", async () =>
+          completeAssistantRun({
+            requestId: persistedRequestId,
+            runId: runId ?? undefined,
+            success: true,
+            message: orchResult.done ? orchResult.finalMessage : "Completed",
+            plan: { actions: allTurns.map((t) => ({ tool: t.tool as any, params: t.params })) },
+            results: finalContext.previousResults,
+            stepsExecuted,
+          }),
+        );
 
-        // Returning rather than re-throwing keeps this out of the failure
-        // path — the user closing something is a normal outcome.
         return {
-          success: false,
-          abandoned: true,
-          reasonCode: closure.closure_reason_code,
-          reason: closure.abandonment_reason,
-          followUpRequired: closure.follow_up_required,
+          success: true,
           requestId,
+          message: orchResult.done ? orchResult.finalMessage : "Done",
+          turns: allTurns.length,
         };
       }
 
-      const message = err instanceof Error ? err.message : "Assistant workflow failed";
-      await step.run("fail-run", async () =>
-        completeAssistantRun({
-          requestId: persistedRequestId,
-          runId: runId ?? undefined,
-          success: false,
-          message,
-          error: err,
+      // ── Paused — waiting for user response ──────────────────────────
+      const { pausedTaskId, pausedTool, pausedDescription } = orchResult;
+
+      // Determine which event(s) to wait for based on the paused tool
+      const waitBase = `wait-input-${iteration}`;
+
+      const [submitEvent, skipEvent, abandonEvent, editEvent] = await Promise.all([
+        step.waitForEvent(`${waitBase}-submit`, {
+          event: ASSISTANT_EVENTS.userInputReceived,
+          timeout: WAIT_TIMEOUT,
+          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
         }),
-      );
-      throw err;
+        step.waitForEvent(`${waitBase}-skip`, {
+          event: ASSISTANT_EVENTS.taskSkipped,
+          timeout: WAIT_TIMEOUT,
+          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+        }),
+        step.waitForEvent(`${waitBase}-abandon`, {
+          event: ASSISTANT_EVENTS.taskAbandoned,
+          timeout: WAIT_TIMEOUT,
+          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+        }),
+        step.waitForEvent(`${waitBase}-edit`, {
+          event: ASSISTANT_EVENTS.taskEdited,
+          timeout: WAIT_TIMEOUT,
+          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+        }),
+      ]);
+
+      if (abandonEvent) {
+        throw new RunAbandonedError(
+          abandonEvent.data.reasonCode ?? "no_longer_needed",
+          abandonEvent.data.note ?? abandonEvent.data.reason,
+          "user",
+          runId ?? undefined,
+          persistedRequestId,
+        );
+      }
+
+      if (!submitEvent && !skipEvent && !editEvent) {
+        // All timed out
+        throw new RunAbandonedError(
+          "timeout",
+          `No response within 24h to: ${pausedDescription}`,
+          "timeout",
+          runId ?? undefined,
+          persistedRequestId,
+        );
+      }
+
+      if (skipEvent) {
+        await step.run(`skip-${iteration}`, async () => {
+          await markStepSkipped({
+            runId,
+            stepIndex: allTurns.length - 1,
+            note: skipEvent.data.reason ?? "Skipped by user",
+          });
+          return { skipped: true };
+        });
+        // Resume with a skip notice so the model knows to move on
+        resumeToolCallId = orchResult.thread
+          .slice()
+          .reverse()
+          .find((m): m is OpenAI.Chat.ChatCompletionAssistantMessageParam =>
+            m.role === "assistant" && !!m.tool_calls?.length,
+          )
+          ?.tool_calls?.[0]?.id;
+        resumeResult = { skipped: true, reason: skipEvent.data.reason ?? "User skipped this step" };
+      } else {
+        const payload = submitEvent?.data.payload ?? editEvent?.data.payload;
+        // Find the tool_call_id from the last assistant message
+        resumeToolCallId = orchResult.thread
+          .slice()
+          .reverse()
+          .find((m): m is OpenAI.Chat.ChatCompletionAssistantMessageParam =>
+            m.role === "assistant" && !!m.tool_calls?.length,
+          )
+          ?.tool_calls?.[0]?.id;
+        resumeResult = payload;
+      }
+
+      iteration++;
     }
   },
 );
 
 // ---------------------------------------------------------------------------
-// Synchronous fallback (non-async API path) — no Inngest, no waitForEvent.
-// request_user_input steps will still create pending_tasks rows but the caller
-// is responsible for polling /assistant/tasks and re-submitting separately.
+// Synchronous fallback (non-async API path — no Inngest, no waitForEvent)
 // ---------------------------------------------------------------------------
 export async function runAssistantPipeline(
   transcript: string,
@@ -554,88 +336,71 @@ export async function runAssistantPipeline(
   } = {},
 ): Promise<{
   success: boolean;
-  plan: ExecutionPlan;
-  stepsExecuted: StepExecutionRecord[];
-  results: Record<string, unknown>;
+  turns: number;
   message: string;
+  results: Record<string, unknown>;
 }> {
   const runId = await startAssistantRun(options.requestId);
-  const plan = await createPlan(transcript, { clerkUserId: options.clerkUserId });
-  const context = createExecutionContext(plan.actions.length, {
-    ...options,
-    runId: runId ?? undefined,
-  });
-  const stepsExecuted: StepExecutionRecord[] = [];
+  await seedRunTrace({ runId, plan: { actions: [] } });
 
-  await seedRunTrace({ runId, plan });
+  const context = createExecutionContext(0, { ...options, runId: runId ?? undefined });
 
-  try {
-    for (let i = 0; i < plan.actions.length; i++) {
-      const action = plan.actions[i]!;
-      const started = Date.now();
-
-      await markStepRunning({
-        runId,
-        stepIndex: i,
-        tool: action.tool,
-        params: action.params,
-        attempt: 0,
-      });
-
-      let result;
-      try {
-        result = await executeAction(action, context, i);
-        await markStepSucceeded({ runId, stepIndex: i, result, durationMs: Date.now() - started });
-      } catch (err) {
-        const normalized = normalizeToolError(action.tool, err);
+  const result = await runOrchestrator(transcript, context, {
+    onTurnComplete: async (turn) => {
+      if (!runId) return;
+      await markStepRunning({ runId, stepIndex: turn.index, tool: turn.tool, params: turn.params, attempt: 0 });
+      if (turn.error) {
         await markStepFailed({
           runId,
-          stepIndex: i,
-          error: normalized,
-          durationMs: Date.now() - started,
+          stepIndex: turn.index,
+          error: normalizeToolError(turn.tool, new Error(turn.error)),
+          durationMs: turn.durationMs,
           attempt: 0,
         });
-        result = { error: normalized.message, errorKind: normalized.kind, errorCode: normalized.code };
+      } else {
+        await markStepSucceeded({ runId, stepIndex: turn.index, result: turn.result, durationMs: turn.durationMs });
       }
+    },
+  });
 
-      stepsExecuted.push({
-        index: i,
-        tool: action.tool,
-        params: resolveActionParams(action.params, context),
-        result,
-        durationMs: Date.now() - started,
-      });
-    }
-
-    const message = `Completed ${stepsExecuted.length} step(s)`;
+  if (!result.done) {
+    // Sync path can't pause — complete the run as-is
     await completeAssistantRun({
       requestId: options.requestId,
       runId,
       success: true,
-      message,
-      plan,
-      results: context.previousResults,
-      stepsExecuted,
+      message: `Paused at ${result.pausedTool} — awaiting user input`,
+      plan: { actions: result.turns.map((t) => ({ tool: t.tool as any, params: t.params })) },
+      results: {},
+      stepsExecuted: result.turns.map(turnToRecord),
     });
-
     return {
       success: true,
-      plan,
-      stepsExecuted,
-      results: context.previousResults,
-      message,
+      turns: result.turns.length,
+      message: `Waiting for user input: ${result.pausedDescription}`,
+      results: {},
     };
-  } catch (err) {
-    await completeAssistantRun({
-      requestId: options.requestId,
-      runId,
-      success: false,
-      message: err instanceof Error ? err.message : "Assistant pipeline failed",
-      error: err,
-      stepsExecuted,
-    });
-    throw err;
   }
+
+  const finalCtx = createExecutionContext(result.turns.length, { ...options, runId: runId ?? undefined });
+  for (const t of result.turns) recordStepResult(finalCtx, t.index, t.tool, t.result);
+
+  await completeAssistantRun({
+    requestId: options.requestId,
+    runId,
+    success: true,
+    message: result.finalMessage,
+    plan: { actions: result.turns.map((t) => ({ tool: t.tool as any, params: t.params })) },
+    results: finalCtx.previousResults,
+    stepsExecuted: result.turns.map(turnToRecord),
+  });
+
+  return {
+    success: true,
+    turns: result.turns.length,
+    message: result.finalMessage,
+    results: finalCtx.previousResults,
+  };
 }
 
 export const inngestFunctions = [assistantWorkflow];

@@ -98,9 +98,8 @@ export async function postAssistant(
 
     const response: AssistantResponseBody = {
       success: result.success,
-      stepsExecuted: result.stepsExecuted,
+      stepsExecuted: [],
       results: result.results,
-      plan: result.plan,
       message: result.message,
     };
 
