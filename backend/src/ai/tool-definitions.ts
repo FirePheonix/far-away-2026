@@ -47,7 +47,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.search_all_sheets",
+      name: "sheets__search_all_sheets",
       description:
         "Search across ALL Google Sheets in the user's Drive. Use when the user says 'all my sheets' or doesn't know which spreadsheet.",
       parameters: {
@@ -65,7 +65,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.get_last_row",
+      name: "sheets__get_last_row",
       description: "Get the last non-empty row from a Google Sheet. Use for 'latest entry' requests.",
       parameters: {
         type: "object",
@@ -80,7 +80,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.get_row",
+      name: "sheets__get_row",
       description: "Get a specific row by row number from a Google Sheet.",
       parameters: {
         type: "object",
@@ -96,7 +96,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.find_email",
+      name: "sheets__find_email",
       description: "Find an email address in a sheet row.",
       parameters: {
         type: "object",
@@ -113,7 +113,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.create_spreadsheet",
+      name: "sheets__create_spreadsheet",
       description: "Create a new Google Spreadsheet.",
       parameters: {
         type: "object",
@@ -128,7 +128,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "sheets.append_row",
+      name: "sheets__append_row",
       description: "Append a row of values to a Google Sheet.",
       parameters: {
         type: "object",
@@ -146,7 +146,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "gmail.send_email",
+      name: "gmail__send_email",
       description:
         "Send an email via Gmail. ONLY call this when you have a REAL, confirmed email address. " +
         "Never guess or invent email addresses. If you don't know the address, call request_user_input first.",
@@ -168,7 +168,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "gmail.search_email",
+      name: "gmail__search_email",
       description: "Search Gmail messages using a Gmail search query.",
       parameters: {
         type: "object",
@@ -183,7 +183,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "gmail.reply_email",
+      name: "gmail__reply_email",
       description: "Reply to an existing Gmail message by message ID.",
       parameters: {
         type: "object",
@@ -201,7 +201,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "calendar.create_event",
+      name: "calendar__create_event",
       description: "Create a Google Calendar event.",
       parameters: {
         type: "object",
@@ -222,7 +222,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "calendar.list_events",
+      name: "calendar__list_events",
       description: "List calendar events in a time range.",
       parameters: {
         type: "object",
@@ -239,7 +239,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "calendar.find_free_slots",
+      name: "calendar__find_free_slots",
       description: "Find available free time slots on the calendar.",
       parameters: {
         type: "object",
@@ -260,7 +260,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "meet.create_link",
+      name: "meet__create_link",
       description: "Create a Google Meet link.",
       parameters: {
         type: "object",
@@ -276,7 +276,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "docs.create_document",
+      name: "docs__create_document",
       description: "Create a new Google Doc.",
       parameters: {
         type: "object",
@@ -291,7 +291,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "docs.append_text",
+      name: "docs__append_text",
       description: "Append text to an existing Google Doc.",
       parameters: {
         type: "object",
@@ -306,7 +306,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "docs.insert_template",
+      name: "docs__insert_template",
       description: "Insert a predefined template into an existing Google Doc.",
       parameters: {
         type: "object",
@@ -386,7 +386,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "obsidian.search_notes",
+      name: "obsidian__search_notes",
       description:
         "Search for notes in the user's local Obsidian vault. Requires the desktop app to be running.",
       parameters: {
@@ -403,7 +403,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "obsidian.append_to_note",
+      name: "obsidian__append_to_note",
       description:
         "Append markdown to a specific Obsidian note. Use obsidian.search_notes first if you only know the name.",
       parameters: {
@@ -420,7 +420,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   {
     type: "function",
     function: {
-      name: "obsidian.write_daily_note",
+      name: "obsidian__write_daily_note",
       description: "Append to today's daily note in Obsidian. Auto-creates the file if missing.",
       parameters: {
         type: "object",
@@ -514,7 +514,7 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
       name: "confirm_action",
       description:
         "Show the user a preview of what is about to happen and wait for their confirmation. " +
-        "ALWAYS call this before gmail.send_email and before calendar.create_event with attendees. " +
+        "ALWAYS call this before gmail__send_email and before calendar__create_event with attendees. " +
         "Do NOT call this for read-only tools.",
       parameters: {
         type: "object",
