@@ -313,7 +313,7 @@ export function DashboardShell({ view }: { view: DashboardView }) {
               <div className="h-9 w-9 rounded-md bg-[#ebe9e4] flex items-center justify-center overflow-hidden">
                 {user?.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={user.imageUrl} alt="Profile" className="h-full w-full object-cover" />
+                  <img src={user.imageUrl} alt="Profile" draggable={false} className="h-full w-full object-cover" />
                 ) : (
                   <User2 className="h-4 w-4 text-brand-dark/70" />
                 )}

@@ -53,6 +53,7 @@ const Footer = () => {
               src="/footer-logo-image.jpg"
               alt="Clawvio Flower"
               fill
+              draggable={false}
               className="object-cover mix-blend-multiply opacity-80"
             />
           </div>

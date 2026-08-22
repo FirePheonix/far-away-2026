@@ -30,6 +30,7 @@ const ComparisonSection = () => {
               src="/Typical-setup.png"
               alt="Fragmented Stack"
               fill
+              draggable={false}
               className="object-cover transition-transform duration-700 group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors duration-500" />
@@ -75,6 +76,7 @@ const ComparisonSection = () => {
               src="/clawvio_overlay_animated.svg"
               alt="Clawvio OS"
               fill
+              draggable={false}
               className="object-cover transition-transform duration-700 group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-orange-500/5 mix-blend-overlay pointer-events-none" />

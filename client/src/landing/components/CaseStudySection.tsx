@@ -70,6 +70,7 @@ const CaseStudySection = () => {
               height={100}
               src="/clawvio-memory.svg"
               alt="Knowledge Graph View"
+              draggable={false}
               className="absolute inset-0 h-6/8 object-cover top-1/2 -translate-y-1/2"
             />
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -78,6 +79,7 @@ const CaseStudySection = () => {
                 alt="Clawvio Logo"
                 width={400}
                 height={400}
+                draggable={false}
                 className="translate-y-4 object-contain"
               />
             </div>

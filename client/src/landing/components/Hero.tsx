@@ -64,6 +64,7 @@ const Hero = () => {
             src="/hero-bg-artwork.svg"
             alt="Abstract Background"
             fill
+            draggable={false}
             className="object-cover"
           />
           <div className="absolute inset-0 bg-black/10" />

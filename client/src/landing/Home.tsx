@@ -86,9 +86,9 @@ const Home = () => {
         <FAQSection />
       </section>
 
-      <section className={`${containerClass} pb-24`}>
+      {/* <section className={`${containerClass} pb-24`}>
         <ContactSection />
-      </section>
+      </section> */}
     </div>
   );
 };

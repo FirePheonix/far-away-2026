@@ -58,6 +58,7 @@ const TeamSection = () => {
               src={member.image}
               alt={member.name}
               fill
+              draggable={false}
               className="object-cover transition-transform duration-700 scale-110 group-hover:scale-125"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />

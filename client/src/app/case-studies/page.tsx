@@ -32,6 +32,7 @@ export default function CaseStudiesPage() {
                 <img
                   src={study.image}
                   alt={study.title}
+                  draggable={false}
                   className="absolute inset-0 h-full w-full object-cover"
                 />
                 <div className="absolute inset-0 bg-black/10 flex items-center justify-center">

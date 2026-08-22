@@ -32,6 +32,7 @@ export default function NewsPage() {
                 <img
                   src={item.image}
                   alt={item.title}
+                  draggable={false}
                   className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 hover:scale-105"
                 />
                 <div className="absolute top-5 right-5 bg-white/90 backdrop-blur-sm text-brand-dark text-[10px] font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full">

@@ -106,6 +106,7 @@ const Services = () => {
                   src={services[activeService].image}
                   alt={services[activeService].title}
                   fill
+                  draggable={false}
                   className="object-contain"
                 />
               </div>
