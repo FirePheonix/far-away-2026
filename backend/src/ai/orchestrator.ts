@@ -32,7 +32,7 @@
 
 import OpenAI from "openai";
 import { env } from "../config/env.js";
-import { OPENAI_TOOL_DEFINITIONS } from "./tool-definitions.js";
+import { OPENAI_TOOL_DEFINITIONS, toRegistryName } from "./tool-definitions.js";
 import { buildMemoryContext } from "../services/memory.service.js";
 import type { ExecutionContext } from "../types/index.js";
 import { getTool } from "../tools/registry.js";
@@ -187,7 +187,10 @@ export async function runOrchestrator(
     // Process all tool calls the model issued in this turn
     // (usually one, but the API can return multiple in parallel).
     for (const toolCall of assistantMsg.tool_calls) {
-      const toolName = toolCall.function.name;
+      // OpenAI returns the double-underscore name (sheets__search_sheet).
+      // Translate back to the dot name the registry expects.
+      const openAIName = toolCall.function.name;
+      const toolName = toRegistryName(openAIName);
       const toolCallId = toolCall.id;
 
       let rawParams: Record<string, unknown>;

@@ -1,23 +1,37 @@
 /**
  * tool-definitions.ts
  *
- * All assistant tools expressed as OpenAI function definitions so the
- * orchestrator can pass them directly to `chat.completions.create`.
+ * All assistant tools expressed as OpenAI function definitions.
  *
- * Each entry matches an existing ToolDefinition in the registry — the
- * `name` must match exactly so the orchestrator can look up the executor.
+ * OpenAI tool names must match ^[a-zA-Z0-9_-]+$ — no dots allowed.
+ * We replace dots with double-underscores (sheets.search_sheet →
+ * sheets__search_sheet) and provide toRegistryName() / toOpenAIName()
+ * helpers so the orchestrator can round-trip cleanly.
+ *
+ * Rule: OPENAI_TOOL_DEFINITIONS uses double-underscore names.
+ *       The registry still uses dot names (sheets.search_sheet).
  */
 
 import type OpenAI from "openai";
 
 type FunctionDef = OpenAI.Chat.ChatCompletionTool;
 
+/** Convert a dot-namespaced registry name to an OpenAI-safe name. */
+export function toOpenAIName(registryName: string): string {
+  return registryName.replace(/\./g, "__");
+}
+
+/** Convert an OpenAI tool name back to the registry name. */
+export function toRegistryName(openAIName: string): string {
+  return openAIName.replace(/__/g, ".");
+}
+
 export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
   // ── Sheets ────────────────────────────────────────────────────────────────
   {
     type: "function",
     function: {
-      name: "sheets.search_sheet",
+      name: "sheets__search_sheet",
       description: "Search rows in a named Google Sheet by text query.",
       parameters: {
         type: "object",
