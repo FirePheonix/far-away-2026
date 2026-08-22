@@ -673,10 +673,14 @@ impl LocalSttApp {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(w, h)));
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(false));
-            // Re-request focus every frame while visible. did_focus guards the
-            // very first steal-focus call; after that we re-request whenever the
-            // overlay is expanded (sticky) so Escape always works even after the
-            // user clicked into another window.
+
+            // Request focus only when we first become visible, OR when the
+            // window has lost focus (user clicked elsewhere) AND the overlay
+            // is in a sticky interactive state that needs keyboard input.
+            // Sending Focus every frame causes a fight with the window manager
+            // on Windows — the overlay grabs focus 30×/s which makes it
+            // impossible for anything else to stay focused.
+            let has_focus = ctx.input(|i| i.focused);
             let is_sticky = matches!(
                 self.overlay.state,
                 OverlayState::Flow { .. }
@@ -687,7 +691,7 @@ impl LocalSttApp {
                     | OverlayState::Unresolved { .. }
                     | OverlayState::Pairing { .. }
             );
-            if !self.did_focus || is_sticky {
+            if !self.did_focus || (is_sticky && !has_focus) {
                 ctx.send_viewport_cmd(ViewportCommand::Focus);
                 self.did_focus = true;
             }

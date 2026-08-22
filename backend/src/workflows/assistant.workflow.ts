@@ -170,7 +170,7 @@ export const assistantWorkflow = inngest.createFunction(
           // throws into this catch, which is where the human is asked.
           let outcome: StepOutcome;
           try {
-            outcome = await step.run(stepId, async () => {
+            outcome = await step.run(stepId, { retries: 0 }, async () => {
               const context = createExecutionContext(plan.actions.length, {
                 clerkUserId,
                 requestId: persistedRequestId,
