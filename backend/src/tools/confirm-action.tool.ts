@@ -80,6 +80,8 @@ export const confirmActionTool: AnyToolDefinition = {
         action: params.action,
         details: params.details,
         confirmKind: "confirm_action",
+        requestId: context.request?.id ?? null,
+        runId: context.request?.runId ?? null,
       },
       wait_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });

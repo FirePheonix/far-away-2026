@@ -28,13 +28,19 @@ export const pendingTaskTool: AnyToolDefinition = {
     const { error } = await supabaseAdmin.from("pending_tasks").insert({
       id: taskId,
       clerk_user_id: context.user.clerkUserId,
-      // run_id is a FK to assistant_runs.id — use runId, NOT requestId
+      // run_id is a FK to assistant_runs.id
       run_id: context.request?.runId ?? null,
       kind: "user_input",
       step_index: context.executionState.currentStep,
       description: params.description,
       required_fields: params.required_fields,
       status: "pending",
+      // Store requestId in context_json so the controller can send it back
+      // in events and the workflow can match on taskId directly.
+      context_json: {
+        requestId: context.request?.id ?? null,
+        runId: context.request?.runId ?? null,
+      },
       wait_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
 

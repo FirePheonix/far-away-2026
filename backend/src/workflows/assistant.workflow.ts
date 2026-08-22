@@ -248,22 +248,22 @@ export const assistantWorkflow = inngest.createFunction(
         step.waitForEvent(`${waitBase}-submit`, {
           event: ASSISTANT_EVENTS.userInputReceived,
           timeout: WAIT_TIMEOUT,
-          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+          if: `event.data.taskId == "${pausedTaskId}"`,
         }),
         step.waitForEvent(`${waitBase}-skip`, {
           event: ASSISTANT_EVENTS.taskSkipped,
           timeout: WAIT_TIMEOUT,
-          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+          if: `event.data.taskId == "${pausedTaskId}"`,
         }),
         step.waitForEvent(`${waitBase}-abandon`, {
           event: ASSISTANT_EVENTS.taskAbandoned,
           timeout: WAIT_TIMEOUT,
-          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+          if: `event.data.taskId == "${pausedTaskId}"`,
         }),
         step.waitForEvent(`${waitBase}-edit`, {
           event: ASSISTANT_EVENTS.taskEdited,
           timeout: WAIT_TIMEOUT,
-          if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${pausedTaskId}"`,
+          if: `event.data.taskId == "${pausedTaskId}"`,
         }),
       ]);
 
