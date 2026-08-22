@@ -24,7 +24,7 @@ use crate::audio::Recorder;
 use crate::config;
 use crate::hotkey::{HotkeyKind, Hotkeys, UiWake};
 use crate::overlay::{
-    Overlay, OverlayAction, OverlayState, RecordMode, PILL_H, PILL_H_FEEDBACK_EXTRA,
+    Overlay, OverlayAction, OverlayState, RecordMode, SessionEntry, PILL_H, PILL_H_FEEDBACK_EXTRA,
     PILL_H_FLOW_EXTRA, PILL_H_RESULT_EXTRA, PILL_H_UNRESOLVED_EXTRA,
 };
 use crate::tray::{Tray, TrayAction};
@@ -908,9 +908,30 @@ impl LocalSttApp {
             "local-stt - working…".to_string()
         });
 
-        self.overlay.show_flow(trace);
+        self.overlay.show_flow(trace.clone());
 
         if settled {
+            // Record the run in the session history sidebar.
+            let short = if trace.transcript.len() > 60 {
+                format!("{}…", &trace.transcript[..60])
+            } else {
+                trace.transcript.clone()
+            };
+            let run_message = trace
+                .closure_reason
+                .clone()
+                .unwrap_or_else(|| match trace.status.as_str() {
+                    "completed" => "Done".to_string(),
+                    "abandoned" => "Abandoned".to_string(),
+                    _ => "Failed".to_string(),
+                });
+            self.overlay.push_session_entry(SessionEntry {
+                transcript: short,
+                status: trace.status.clone(),
+                message: run_message,
+                steps: trace.steps.len(),
+            });
+
             // Always clear the active request once the run reaches a terminal
             // state so the user can immediately fire a new command. Previously
             // this was guarded by `!waiting` which kept the request locked

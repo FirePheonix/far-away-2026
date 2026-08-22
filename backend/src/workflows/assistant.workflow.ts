@@ -91,8 +91,6 @@ export const assistantWorkflow = inngest.createFunction(
         match: "data.requestId",
       },
     ],
-  },
-    ],
     // Reached only when the function itself dies — a planner outage, a bad
     // deploy, an unhandled throw. Cancellations do not come through here,
     // which is why run-level abandon writes its own closure in the handler.
