@@ -562,7 +562,9 @@ impl Overlay {
                     .max_rect(right)
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
-            self.draw_right_control(&mut right_ui);
+            if self.draw_right_control(&mut right_ui) {
+                should_dismiss = true;
+            }
         }
 
         if let OverlayState::Result { text, ok } = &self.state.clone() {
@@ -1442,10 +1444,32 @@ impl Overlay {
         }
     }
 
-    fn draw_right_control(&self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::hover());
+    /// Draw the right-side control. Returns `true` if the user clicked the × close button.
+    fn draw_right_control(&self, ui: &mut egui::Ui) -> bool {
+        let is_close = matches!(
+            self.state,
+            OverlayState::Result { .. }
+                | OverlayState::Feedback { .. }
+                | OverlayState::Pairing { .. }
+                | OverlayState::Flow { .. }
+                | OverlayState::Confirm { .. }
+                | OverlayState::ReasonPrompt { .. }
+                | OverlayState::Unresolved { .. }
+        );
+
+        // Allocate with click sense when showing the × so it actually fires.
+        let sense = if is_close { Sense::click() } else { Sense::hover() };
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), sense);
         let p = ui.painter_at(rect);
         let c = rect.center();
+
+        // Highlight on hover when it's the close button.
+        let line_color = if is_close && resp.hovered() {
+            TEXT
+        } else {
+            MUTED
+        };
+
         match self.state {
             OverlayState::Listening { .. } => {
                 // Pause bars (match the mock).
@@ -1468,21 +1492,22 @@ impl Overlay {
             | OverlayState::Confirm { .. }
             | OverlayState::ReasonPrompt { .. }
             | OverlayState::Unresolved { .. } => {
-                // Close affordance
                 let s = 5.0;
                 p.line_segment(
                     [Pos2::new(c.x - s, c.y - s), Pos2::new(c.x + s, c.y + s)],
-                    Stroke::new(1.6_f32, MUTED),
+                    Stroke::new(1.6_f32, line_color),
                 );
                 p.line_segment(
                     [Pos2::new(c.x + s, c.y - s), Pos2::new(c.x - s, c.y + s)],
-                    Stroke::new(1.6_f32, MUTED),
+                    Stroke::new(1.6_f32, line_color),
                 );
             }
             _ => {
                 p.circle_filled(c, 2.5, MUTED);
             }
         }
+
+        is_close && resp.clicked()
     }
 
     // -----------------------------------------------------------------------
