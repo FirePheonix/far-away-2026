@@ -33,8 +33,8 @@ static UI_WAKE: OnceLock<UiWake> = OnceLock::new();
 pub struct Hotkeys {
     _manager: GlobalHotKeyManager,
     rx: Receiver<HotkeyKind>,
-    id_ocr: u32,
-    id_command: u32,
+    _id_ocr: u32,
+    _id_command: u32,
 }
 
 impl Hotkeys {
@@ -88,8 +88,8 @@ impl Hotkeys {
         Ok(Self {
             _manager: manager,
             rx,
-            id_ocr,
-            id_command,
+            _id_ocr: id_ocr,
+            _id_command: id_command,
         })
     }
 
