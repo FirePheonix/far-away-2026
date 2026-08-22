@@ -12,36 +12,24 @@ const ContactSection = () => {
 
   return (
     <div className="py-24">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <FadeIn className="lg:col-span-5 relative min-h-[500px] rounded-[2.5rem] overflow-hidden p-8 flex flex-col justify-end">
-          <img
-            src={assets.vercel.sections.contact_bg}
-            alt="Contact Background"
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-
-          <div className="relative z-10 text-white">
-            <h2 className="text-4xl font-serif mb-4 leading-tight">
-              Build your conversation OS.
-            </h2>
-            <p className="text-sm opacity-80 mb-8 max-w-xs">
-              Tell us your workflow and we will help you launch Clawvio with
-              the right integrations, automations, and run visibility.
-            </p>
-
-            <div className="flex items-center gap-6 text-xs font-medium uppercase tracking-widest opacity-60">
-              <span>Clawvio</span>
-              <span>Conversation-first</span>
-              <span>Execution-ready</span>
-            </div>
-          </div>
-        </FadeIn>
-
+      <div className="max-w-4xl mx-auto">
         <FadeIn
           delay={0.2}
-          className="lg:col-span-7 bg-[#F2F0ED] rounded-[2.5rem] p-8 md:p-12 flex flex-col justify-center"
+          className="bg-[#F2F0ED] rounded-[2.5rem] p-8 md:p-12 flex flex-col justify-center"
         >
+          <div className="mb-10 text-center">
+            <span className="text-brand-dark/60 uppercase tracking-widest text-xs font-semibold mb-2 block">
+              Contact Us
+            </span>
+            <h2 className="text-3xl md:text-4xl font-serif text-brand-dark mb-4">
+              Build your conversation OS
+            </h2>
+            <p className="text-brand-text/70 max-w-xl mx-auto text-sm md:text-base">
+              Tell us your workflow and we will help you launch Clawvio with the
+              right integrations, automations, and run visibility.
+            </p>
+          </div>
+
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
