@@ -15,6 +15,7 @@ const envSchema = z.object({
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
   INNGEST_APP_ID: z.string().default("far-away-assistant"),
+  INNGEST_BASE_URL: z.string().url().optional(),
 
   CLERK_SECRET_KEY: z.string().optional(),
   ASSISTANT_DEFAULT_CLERK_USER_ID: z.string().optional(),

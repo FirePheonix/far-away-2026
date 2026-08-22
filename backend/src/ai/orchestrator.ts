@@ -152,6 +152,7 @@ export async function runOrchestrator(
 
   if (options.priorThread && options.priorThread.length > 0) {
     thread = [...options.priorThread];
+    console.log(`[orchestrator] resuming with ${thread.length} prior messages, toolCallId=${options.resumeToolCallId}`);
     // On resume: append the tool result that unblocked us.
     if (options.resumeToolCallId !== undefined && options.resumeResult !== undefined) {
       thread.push({
@@ -159,6 +160,9 @@ export async function runOrchestrator(
         tool_call_id: options.resumeToolCallId,
         content: JSON.stringify(options.resumeResult),
       });
+      console.log(`[orchestrator] appended tool result for ${options.resumeToolCallId}:`, JSON.stringify(options.resumeResult));
+    } else {
+      console.log(`[orchestrator] WARNING: no resumeToolCallId or resumeResult — toolCallId=${options.resumeToolCallId}, hasResult=${options.resumeResult !== undefined}`);
     }
   } else {
     // Fresh start.

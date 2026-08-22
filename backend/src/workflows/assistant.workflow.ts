@@ -308,15 +308,16 @@ export const assistantWorkflow = inngest.createFunction(
         resumeResult = { skipped: true, reason: skipEvent.data.reason ?? "User skipped this step" };
       } else {
         const payload = submitEvent?.data.payload ?? editEvent?.data.payload;
-        // Find the tool_call_id from the last assistant message
-        resumeToolCallId = orchResult.thread
+        // Find the tool_call_id from the last assistant message in the thread
+        const lastAssistant = orchResult.thread
           .slice()
           .reverse()
           .find((m): m is OpenAI.Chat.ChatCompletionAssistantMessageParam =>
             m.role === "assistant" && !!m.tool_calls?.length,
-          )
-          ?.tool_calls?.[0]?.id;
+          );
+        resumeToolCallId = lastAssistant?.tool_calls?.[0]?.id;
         resumeResult = payload;
+        console.log(`[workflow] resuming iteration ${iteration + 1}, toolCallId=${resumeToolCallId}, payload=`, JSON.stringify(payload));
       }
 
       iteration++;

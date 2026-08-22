@@ -3,7 +3,10 @@ import { env } from "../config/env.js";
 
 export const inngest = new Inngest({
   id: env.INNGEST_APP_ID,
-  eventKey: env.INNGEST_EVENT_KEY,
+  eventKey: env.INNGEST_EVENT_KEY ?? "local",
+  // In local dev: point at the Inngest dev server (npx inngest-cli@latest dev)
+  // so events don't require a real event key.
+  ...(env.INNGEST_BASE_URL ? { baseUrl: env.INNGEST_BASE_URL } : {}),
 });
 
 export const ASSISTANT_EVENTS = {
