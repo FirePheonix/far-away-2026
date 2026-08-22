@@ -25,8 +25,10 @@ pub const PILL_H_REASON_EXTRA: f32 = 250.0;
 /// Extra height for the unresolved / handback list.
 pub const PILL_H_UNRESOLVED_EXTRA: f32 = 320.0;
 /// Window height when a result is visible.
+#[allow(dead_code)]
 pub const PILL_H_RESULT: f32 = PILL_H + PILL_H_RESULT_EXTRA;
 /// Window height when a pending task needs a decision.
+#[allow(dead_code)]
 pub const PILL_H_FEEDBACK: f32 = PILL_H + PILL_H_FEEDBACK_EXTRA;
 /// Concave flare radius where the notch meets the top of the screen.
 const FLARE: f32 = 16.0;

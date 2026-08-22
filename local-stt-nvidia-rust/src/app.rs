@@ -975,10 +975,10 @@ impl LocalSttApp {
                         self.active_request = Some(request_id);
                         self.spawn_fetch_trace();
                     } else {
-                        self.overlay.show_feedback(vec![task]);
+                        self.overlay.show_feedback(vec![task.clone()]);
                     }
                 } else {
-                    self.overlay.show_feedback(vec![task]);
+                    self.overlay.show_feedback(vec![task.clone()]);
                 }
                 return;
             }
