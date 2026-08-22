@@ -1,2 +1,3 @@
--- Older desktop_tokens rows predate this column. Code updates last_used_at on each request.
-ALTER TABLE desktop_tokens ADD COLUMN last_used_at DATETIME;
+-- No-op. desktop_tokens.last_used_at is already declared in
+-- 01_initial_schema.sql. See 02_add_revoked_at.sql for the same situation.
+SELECT 1;

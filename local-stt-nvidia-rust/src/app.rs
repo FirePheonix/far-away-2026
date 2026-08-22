@@ -25,7 +25,7 @@ use crate::config;
 use crate::hotkey::{HotkeyKind, Hotkeys, UiWake};
 use crate::overlay::{
     Overlay, OverlayAction, OverlayState, RecordMode, PILL_H, PILL_H_FEEDBACK_EXTRA,
-    PILL_H_RESULT_EXTRA,
+    PILL_H_FLOW_EXTRA, PILL_H_RESULT_EXTRA, PILL_H_UNRESOLVED_EXTRA,
 };
 use crate::tray::{Tray, TrayAction};
 use crate::util::SAMPLE_RATE;
@@ -37,8 +37,11 @@ const LIVE_CHUNK_SAMPLES: usize = (SAMPLE_RATE as usize) * (LIVE_CHUNK_SECS as u
 enum WorkerMsg {
     EngineReady(Result<Arc<AsrEngine>, String>),
     ChunkDone { speaker: String, id: usize, segments: Vec<crate::asr::Segment> },
-    CommandSent { ok: bool, message: String },
+    CommandSent { ok: bool, message: String, request_id: Option<String> },
     TasksFetched { tasks: Vec<api::PendingTask> },
+    TraceFetched { trace: api::Trace },
+    UnresolvedFetched { data: api::Unresolved },
+    ReasonsFetched { chips: Vec<api::ReasonChip> },
     FeedbackDone { ok: bool, message: String },
     PairingReady { pairing_id: String, code: String, claim_url: String },
     PairingFailed { message: String },
@@ -136,6 +139,13 @@ pub struct LocalSttApp {
     pairing_started: Option<Instant>,
     last_opened_claim_url: Option<String>,
     last_obsidian_poll: Instant,
+    /// The request whose agent flow is currently on screen.
+    active_request: Option<String>,
+    last_trace_poll: Instant,
+    /// Set while the mic is capturing a spoken closure reason, so the
+    /// transcript lands in the note field instead of the clipboard.
+    dictating_reason: bool,
+    fetched_reasons: bool,
 }
 
 impl LocalSttApp {
@@ -182,6 +192,10 @@ impl LocalSttApp {
             pairing_started: None,
             last_opened_claim_url: None,
             last_obsidian_poll: Instant::now(),
+            active_request: None,
+            last_trace_poll: Instant::now(),
+            dictating_reason: false,
+            fetched_reasons: false,
         })
     }
 
@@ -273,17 +287,31 @@ impl LocalSttApp {
         }
 
         if !self.recording {
-            let mode = match kind {
-                HotkeyKind::Ocr => RecordMode::Ocr,
-                HotkeyKind::Command => RecordMode::Command,
+            // With a reason prompt open, the hotkey means "speak the reason"
+            // rather than "start a new command".
+            let mode = if self.overlay.is_reason_prompt() || self.overlay.is_confirm() {
+                RecordMode::ReasonNote
+            } else {
+                match kind {
+                    HotkeyKind::Ocr => RecordMode::Ocr,
+                    HotkeyKind::Command => RecordMode::Command,
+                }
             };
             self.recording = true;
             self.session = Some(LiveSession::new(mode));
             self.recorder.start();
-            self.overlay.show_listening(mode);
+            if mode == RecordMode::ReasonNote {
+                // Keep the reason prompt on screen — it owns the note field
+                // this dictation is going to fill.
+                self.dictating_reason = true;
+                self.overlay.set_dictating(true);
+            } else {
+                self.overlay.show_listening(mode);
+            }
             let mode_label = match mode {
                 RecordMode::Ocr => "OCR",
                 RecordMode::Command => "Command",
+                RecordMode::ReasonNote => "Reason note",
             };
             self.tray.set_tooltip(&format!("local-stt - recording [{mode_label}] (live chunks)..."));
             println!(
@@ -307,7 +335,9 @@ impl LocalSttApp {
                 (id_u, exp_u, id_o, exp_o)
             };
 
-            self.overlay.show_processing();
+            if !self.dictating_reason {
+                self.overlay.show_processing();
+            }
             self.tray.set_tooltip("local-stt - finishing...");
             let tail_u_s = tail_user.len() as f32 / SAMPLE_RATE as f32;
             let tail_o_s = tail_other.len() as f32 / SAMPLE_RATE as f32;
@@ -349,7 +379,26 @@ impl LocalSttApp {
         match session.mode {
             RecordMode::Ocr => self.finalize_ocr(),
             RecordMode::Command => self.finalize_command(),
+            RecordMode::ReasonNote => self.finalize_reason_note(),
         }
+    }
+
+    /// A spoken closure reason: goes into the open prompt's note field, not the
+    /// clipboard and not the backend.
+    fn finalize_reason_note(&mut self) {
+        let Some(session) = self.session.take() else { return };
+        let text = session.user_transcript();
+        self.dictating_reason = false;
+        if text.trim().is_empty() {
+            self.overlay.set_dictating(false);
+            println!("[local-stt] reason note — nothing heard");
+        } else if self.overlay.is_confirm() && self.overlay.apply_spoken_confirm(&text) {
+            println!("[local-stt] spoken confirm: {text}");
+        } else {
+            println!("[local-stt] reason note captured ({} chars)", text.len());
+            self.overlay.append_reason_note(&text);
+        }
+        self.update_tray_ready_label();
     }
 
     fn finalize_ocr(&mut self) {
@@ -414,11 +463,11 @@ impl LocalSttApp {
 
         thread::spawn(move || {
             let result = api::send_command(&backend_url, token.as_deref(), &transcript);
-            let (ok, message) = match result {
-                Ok(msg) => {
-                    log::debug!("[local-stt] Command sent OK: {msg}");
+            let (ok, message, request_id) = match result {
+                Ok(sent) => {
+                    log::debug!("[local-stt] Command sent OK: {}", sent.message);
                     println!("[local-stt] Command sent OK");
-                    (true, msg)
+                    (true, sent.message, sent.request_id)
                 }
                 Err(e) => {
                     // Don't include the raw error chain in the message shown to the
@@ -426,10 +475,14 @@ impl LocalSttApp {
                     let display = format!("{e}");
                     log::debug!("[local-stt] Command failed (detail): {e:#}");
                     println!("[local-stt] Command failed: {display}");
-                    (false, display)
+                    (false, display, None)
                 }
             };
-            let _ = tx.send(WorkerMsg::CommandSent { ok, message });
+            let _ = tx.send(WorkerMsg::CommandSent {
+                ok,
+                message,
+                request_id,
+            });
             if let Some(ctx) = wake.lock().as_ref() {
                 ctx.request_repaint();
             }
@@ -480,13 +533,44 @@ impl LocalSttApp {
                     }
                     self.try_finalize();
                 }
-                WorkerMsg::CommandSent { ok, message } => {
-                    self.overlay.show_result(message, ok, self.now());
+                WorkerMsg::CommandSent {
+                    ok,
+                    message,
+                    request_id,
+                } => {
                     self.update_tray_ready_label();
-                    self.spawn_fetch_tasks();
+                    match (ok, request_id) {
+                        // Queued successfully — switch straight to the live flow
+                        // instead of a fire-and-forget confirmation.
+                        (true, Some(id)) => {
+                            self.active_request = Some(id.clone());
+                            self.last_trace_poll = Instant::now();
+                            self.overlay.show_flow(api::Trace {
+                                request_id: id,
+                                status: "queued".into(),
+                                ..Default::default()
+                            });
+                            self.spawn_fetch_trace();
+                        }
+                        _ => {
+                            self.overlay.show_result(message, ok, self.now());
+                            self.spawn_fetch_tasks();
+                        }
+                    }
                 }
                 WorkerMsg::TasksFetched { tasks } => {
                     self.apply_pending_tasks(tasks);
+                }
+                WorkerMsg::TraceFetched { trace } => {
+                    self.apply_trace(trace);
+                }
+                WorkerMsg::UnresolvedFetched { data } => {
+                    self.overlay.show_unresolved(data);
+                }
+                WorkerMsg::ReasonsFetched { chips } => {
+                    if !chips.is_empty() {
+                        self.overlay.reason_chips = chips;
+                    }
                 }
                 WorkerMsg::PairingReady {
                     pairing_id,
@@ -533,11 +617,13 @@ impl LocalSttApp {
                     }
                 }
                 WorkerMsg::FeedbackDone { ok, message } => {
+                    self.overlay.set_feedback_busy(false, message);
                     if ok {
-                        self.overlay.set_feedback_busy(true, message);
-                        self.spawn_fetch_tasks();
-                    } else {
-                        self.overlay.set_feedback_busy(false, message);
+                        if self.active_request.is_some() {
+                            self.spawn_fetch_trace();
+                        } else {
+                            self.spawn_fetch_tasks();
+                        }
                     }
                     self.update_tray_ready_label();
                 }
@@ -576,6 +662,8 @@ impl LocalSttApp {
             let h = self.overlay.desired_height().min(max_h);
             let extra = match self.overlay.state {
                 OverlayState::Feedback { .. } => PILL_H_FEEDBACK_EXTRA,
+                OverlayState::Flow { .. } => PILL_H_FLOW_EXTRA,
+                OverlayState::Unresolved { .. } => PILL_H_UNRESOLVED_EXTRA,
                 _ => PILL_H_RESULT_EXTRA,
             };
             self.overlay.max_scroll_h = (extra - 80.0).max(60.0);
@@ -623,6 +711,8 @@ impl eframe::App for LocalSttApp {
         self.poll_workers();
         self.pump_live_chunks();
         self.poll_pending_tasks();
+        self.poll_trace();
+        self.fetch_reasons_once();
 
         if let Some(kind) = self.hotkeys.poll_toggle() {
             self.toggle_record(kind);
@@ -633,6 +723,7 @@ impl eframe::App for LocalSttApp {
                 return;
             }
             TrayAction::Pair => self.start_pairing(),
+            TrayAction::Unresolved => self.spawn_fetch_unresolved(),
             TrayAction::None => {}
         }
         self.poll_pairing();
@@ -712,7 +803,15 @@ impl LocalSttApp {
         if self.recording_busy() {
             return;
         }
-        if matches!(self.overlay.state, OverlayState::Pairing { .. }) {
+        // The flow view already renders its own handback, and a half-answered
+        // closure must not be yanked out from under the user.
+        if self.overlay.is_flow() || self.overlay.is_collecting_closure() {
+            return;
+        }
+        if matches!(
+            self.overlay.state,
+            OverlayState::Pairing { .. } | OverlayState::Unresolved { .. }
+        ) {
             return;
         }
         if tasks.is_empty() {
@@ -722,51 +821,319 @@ impl LocalSttApp {
             return;
         }
         let n = tasks.len();
+
+        // A step failure carries its own run context, so show it in the flow
+        // view where the user can see which step died and why.
+        if let Some(request_id) = tasks
+            .iter()
+            .find(|t| t.is_failure())
+            .and_then(|t| t.request_id.clone())
+        {
+            self.active_request = Some(request_id);
+            self.spawn_fetch_trace();
+            self.tray
+                .set_tooltip(&format!("local-stt - {n} task(s) need you"));
+            return;
+        }
+
         self.overlay.show_feedback(tasks);
         self.tray
             .set_tooltip(&format!("local-stt - {n} task(s) need you"));
     }
 
-    fn handle_overlay_action(&mut self, action: OverlayAction) {
-        if let OverlayAction::OpenPairUrl { url } = &action {
-            api::open_in_browser(url);
+    /// Poll the agent flow while a run is in flight. Faster than the task poll
+    /// because this is what the user is watching.
+    fn poll_trace(&mut self) {
+        if self.active_request.is_none() || self.recording {
             return;
         }
-        let (kind, task_id, instruction) = match action {
-            OverlayAction::None | OverlayAction::OpenPairUrl { .. } => return,
-            OverlayAction::Skip { task_id } => ("skip", task_id, None),
-            OverlayAction::Abandon { task_id } => ("abandon", task_id, None),
-            OverlayAction::Change {
-                task_id,
-                instruction,
-            } => ("change", task_id, Some(instruction)),
+        if self.overlay.is_collecting_closure() {
+            return;
+        }
+        if self.last_trace_poll.elapsed().as_millis() < 1200 {
+            return;
+        }
+        self.last_trace_poll = Instant::now();
+        self.spawn_fetch_trace();
+    }
+
+    fn spawn_fetch_trace(&self) {
+        let Some(request_id) = self.active_request.clone() else {
+            return;
         };
-        self.overlay.set_feedback_busy(
-            true,
-            match kind {
-                "skip" => "Skipping…",
-                "abandon" => "Abandoning…",
-                _ => "Sending change…",
-            },
-        );
         let cfg = config::load();
         let backend_url = cfg.backend_url.clone();
         let token = cfg.desktop_token.clone();
         let tx = self.worker_tx.clone();
         let wake = self.ui_wake.clone();
         thread::spawn(move || {
-            let result = match kind {
-                "skip" => api::skip_task(&backend_url, token.as_deref(), &task_id)
+            match api::fetch_trace(&backend_url, token.as_deref(), &request_id) {
+                Ok(trace) => {
+                    let _ = tx.send(WorkerMsg::TraceFetched { trace });
+                }
+                Err(e) => log::debug!("[local-stt] trace poll: {e}"),
+            }
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn apply_trace(&mut self, trace: api::Trace) {
+        if self.overlay.is_collecting_closure() {
+            return;
+        }
+        if self.active_request.as_deref() != Some(trace.request_id.as_str()) {
+            return;
+        }
+
+        let settled = trace.is_settled();
+        let waiting = !trace.tasks.is_empty();
+        let failed = trace.steps.iter().any(|s| s.status == "failed");
+
+        self.tray.set_tooltip(&if settled {
+            format!("local-stt - run {}", trace.status)
+        } else if failed {
+            "local-stt - a step failed".to_string()
+        } else {
+            "local-stt - working…".to_string()
+        });
+
+        self.overlay.show_flow(trace);
+
+        // Stop polling once nothing more can change without the user acting.
+        if settled && !waiting {
+            self.active_request = None;
+            self.overlay.arm_dismiss(self.now(), 10.0);
+        }
+    }
+
+    fn spawn_fetch_unresolved(&self) {
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        thread::spawn(move || {
+            match api::fetch_unresolved(&backend_url, token.as_deref()) {
+                Ok(data) => {
+                    let _ = tx.send(WorkerMsg::UnresolvedFetched { data });
+                }
+                Err(e) => log::debug!("[local-stt] unresolved: {e}"),
+            }
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Reason vocabulary is server-owned; fetch it once per launch.
+    fn fetch_reasons_once(&mut self) {
+        if self.fetched_reasons {
+            return;
+        }
+        let cfg = config::load();
+        if cfg.desktop_token.is_none() {
+            return;
+        }
+        self.fetched_reasons = true;
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+        let tx = self.worker_tx.clone();
+        thread::spawn(move || {
+            if let Ok(chips) = api::fetch_closure_reasons(&backend_url, token.as_deref()) {
+                let _ = tx.send(WorkerMsg::ReasonsFetched { chips });
+            }
+        });
+    }
+
+    /// One place where a user gesture becomes a backend call. Anything that
+    /// ends work is bounced into the reason prompt first — a closure without a
+    /// recorded reason is the thing this flow exists to prevent.
+    fn handle_overlay_action(&mut self, action: OverlayAction) {
+        let chips = self.overlay.reason_chips.clone();
+
+        // Requests arriving without a reason code still need one collected.
+        match &action {
+            OverlayAction::None => return,
+            OverlayAction::OpenPairUrl { url } => {
+                api::open_in_browser(url);
+                return;
+            }
+            OverlayAction::Dictate => {
+                // The overlay already flagged itself as listening; start the mic.
+                self.toggle_record(crate::hotkey::HotkeyKind::Ocr);
+                return;
+            }
+            OverlayAction::ShowUnresolved => {
+                self.spawn_fetch_unresolved();
+                return;
+            }
+            OverlayAction::OpenTask { task } => {
+                if task.is_failure() {
+                    if let Some(request_id) = task.request_id.clone() {
+                        self.active_request = Some(request_id);
+                        self.spawn_fetch_trace();
+                    } else {
+                        self.overlay.show_feedback(vec![task]);
+                    }
+                } else {
+                    self.overlay.show_feedback(vec![task]);
+                }
+                return;
+            }
+            OverlayAction::Reconnect => {
+                let cfg = config::load();
+                api::open_in_browser(&format!("{}/dashboard", cfg.web_url.trim_end_matches('/')));
+                return;
+            }
+            OverlayAction::Skip {
+                task_id,
+                reason_code,
+                ..
+            } if reason_code.is_empty() => {
+                self.overlay.begin_closure(
+                    crate::overlay::PendingClosure::SkipTask {
+                        task_id: task_id.clone(),
+                    },
+                    "The rest of the plan will still run.",
+                    chips,
+                );
+                return;
+            }
+            OverlayAction::Abandon {
+                task_id,
+                reason_code,
+                ..
+            } if reason_code.is_empty() => {
+                self.overlay.begin_closure(
+                    crate::overlay::PendingClosure::AbandonTask {
+                        task_id: task_id.clone(),
+                    },
+                    "This stops the whole run.",
+                    chips,
+                );
+                return;
+            }
+            OverlayAction::Decide {
+                task_id,
+                decision,
+                reason_code,
+                ..
+            } if reason_code.is_empty() && decision != "retry" => {
+                self.overlay.begin_closure(
+                    crate::overlay::PendingClosure::DecideStep {
+                        task_id: task_id.clone(),
+                        decision: decision.clone(),
+                    },
+                    if decision == "skip" {
+                        "The run continues without this step."
+                    } else {
+                        "This stops the whole run."
+                    },
+                    chips,
+                );
+                return;
+            }
+            OverlayAction::StopRun {
+                run_id,
+                request_id,
+                reason_code,
+                ..
+            } if reason_code.is_empty() => {
+                self.overlay.begin_closure(
+                    crate::overlay::PendingClosure::StopRun {
+                        run_id: run_id.clone(),
+                        request_id: request_id.clone(),
+                    },
+                    "Anything already sent stays sent.",
+                    chips,
+                );
+                return;
+            }
+            _ => {}
+        }
+
+        let label = match &action {
+            OverlayAction::Skip { .. } => "Skipping…",
+            OverlayAction::Abandon { .. } => "Abandoning…",
+            OverlayAction::Change { .. } => "Sending change…",
+            OverlayAction::Pause { .. } => "Snoozing…",
+            OverlayAction::StopRun { .. } => "Stopping…",
+            OverlayAction::Decide { decision, .. } => {
+                if decision == "retry" {
+                    "Retrying…"
+                } else {
+                    "Closing out…"
+                }
+            }
+            _ => "Working…",
+        };
+        self.overlay.set_feedback_busy(true, label);
+
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+
+        thread::spawn(move || {
+            let t = token.as_deref();
+            let result = match action {
+                OverlayAction::Skip {
+                    task_id,
+                    reason_code,
+                    note,
+                } => api::skip_task(&backend_url, t, &task_id, &reason_code, note.as_deref())
                     .map(|_| "Skipped".to_string()),
-                "abandon" => api::abandon_task(&backend_url, token.as_deref(), &task_id)
+                OverlayAction::Abandon {
+                    task_id,
+                    reason_code,
+                    note,
+                } => api::abandon_task(&backend_url, t, &task_id, &reason_code, note.as_deref())
                     .map(|_| "Abandoned".to_string()),
-                _ => api::change_task(
+                OverlayAction::Decide {
+                    task_id,
+                    decision,
+                    reason_code,
+                    note,
+                } => api::decide_task(
                     &backend_url,
-                    token.as_deref(),
+                    t,
                     &task_id,
-                    instruction.as_deref().unwrap_or(""),
+                    &decision,
+                    &reason_code,
+                    note.as_deref(),
                 )
-                .map(|_| "Change sent".to_string()),
+                .map(|_| match decision.as_str() {
+                    "retry" => "Retrying that step".to_string(),
+                    "skip" => "Step skipped".to_string(),
+                    _ => "Run closed".to_string(),
+                }),
+                OverlayAction::StopRun {
+                    run_id,
+                    request_id,
+                    reason_code,
+                    note,
+                } => api::abandon_run(
+                    &backend_url,
+                    t,
+                    &run_id,
+                    &request_id,
+                    &reason_code,
+                    note.as_deref(),
+                )
+                .map(|_| "Run stopped".to_string()),
+                OverlayAction::Pause { task_id, minutes } => {
+                    api::pause_task(&backend_url, t, &task_id, minutes, None)
+                        .map(|at| format!("Snoozed until {at}"))
+                }
+                OverlayAction::Change {
+                    task_id,
+                    instruction,
+                } => api::change_task(&backend_url, t, &task_id, &instruction)
+                    .map(|_| "Change sent".to_string()),
+                _ => Ok(String::new()),
             };
             let (ok, message) = match result {
                 Ok(msg) => (true, msg),

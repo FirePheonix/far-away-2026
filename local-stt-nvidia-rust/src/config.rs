@@ -13,6 +13,11 @@ pub struct Config {
     #[serde(default = "default_backend_url")]
     pub backend_url: String,
 
+    /// Base URL of the web dashboard. Only used to send the user somewhere they
+    /// can reconnect an integration after an auth failure.
+    #[serde(default = "default_web_url")]
+    pub web_url: String,
+
     /// Desktop auth token issued by the backend after pairing.
     /// Written here by the pairing flow; read on every Command hotkey press.
     #[serde(default)]
@@ -27,11 +32,16 @@ fn default_backend_url() -> String {
     "http://localhost:4001".into()
 }
 
+fn default_web_url() -> String {
+    "http://localhost:3000".into()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             model: default_model(),
             backend_url: default_backend_url(),
+            web_url: default_web_url(),
             desktop_token: None,
         }
     }

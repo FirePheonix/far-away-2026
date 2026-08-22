@@ -46,4 +46,12 @@ export const ASSISTANT_EVENTS = {
    * data: { obsidianRequestId, requestId, result }
    */
   obsidianResultReceived: "assistant/obsidian_result_received",
+
+  /**
+   * Fired by /tasks/:taskId/decide when a step failed permanently and the user
+   * chose what to do about it.
+   * data: { taskId, requestId, stepIndex, decision: "retry" | "skip" | "abandon",
+   *         reasonCode?: string, note?: string }
+   */
+  stepDecision: "assistant/step_decision",
 } as const;

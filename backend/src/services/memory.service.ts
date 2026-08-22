@@ -88,6 +88,43 @@ export async function rememberContactsFromTranscript(
 }
 
 /**
+ * Stores why the user abandoned, skipped or corrected something so the planner
+ * stops repeating a mistake it only had to be told about once.
+ */
+export async function rememberCorrection(
+  clerkUserId: string,
+  params: {
+    reasonLabel: string;
+    note?: string | null;
+    subject?: string | null;
+    requestId?: string | null;
+  },
+): Promise<void> {
+  const parts = [
+    params.subject ? `While working on: ${params.subject}.` : null,
+    `The user stopped it because: ${params.reasonLabel}.`,
+    params.note ? `They said: "${params.note}"` : null,
+  ].filter(Boolean);
+
+  const body = parts.join(" ");
+  const embedding = await createEmbedding(body);
+
+  const { error } = await supabaseAdmin.from("memory_items").insert({
+    id: randomUUID(),
+    clerk_user_id: clerkUserId,
+    kind: "correction",
+    title: `Correction: ${params.reasonLabel}`,
+    body,
+    metadata: { requestId: params.requestId, note: params.note ?? null },
+    embedding,
+  });
+
+  if (error) {
+    console.error("[Memory] Failed to store correction memory", error.message);
+  }
+}
+
+/**
  * Nearest past memories for this user by cosine similarity. Runs through the
  * match_memories SQL function because the Data API cannot express `<=>`.
  */
@@ -169,11 +206,20 @@ export async function buildMemoryContext(
     }
   }
 
-  if (memories.length > 0) {
-    const lines = memories.map(
-      (m) => `- [${new Date(m.createdAt).toISOString().slice(0, 10)}] ${m.body}`,
+  const render = (items: RecalledMemory[]) =>
+    items.map((m) => `- [${new Date(m.createdAt).toISOString().slice(0, 10)}] ${m.body}`).join("\n");
+
+  const corrections = memories.filter((m) => m.kind === "correction");
+  const past = memories.filter((m) => m.kind !== "correction");
+
+  if (corrections.length > 0) {
+    sections.push(
+      `LESSONS FROM PAST CORRECTIONS (the user stopped these runs — do not repeat the mistake):\n${render(corrections)}`,
     );
-    sections.push(`RELEVANT PAST REQUESTS FROM THIS USER:\n${lines.join("\n")}`);
+  }
+
+  if (past.length > 0) {
+    sections.push(`RELEVANT PAST REQUESTS FROM THIS USER:\n${render(past)}`);
   }
 
   return sections.join("\n\n");
