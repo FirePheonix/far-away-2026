@@ -7,13 +7,17 @@ import {
   PLANNER_EXAMPLES,
 } from "./prompts.js";
 import { executionPlanSchema, type ExecutionPlanInput } from "./schemas.js";
+import { buildMemoryContext } from "../services/memory.service.js";
 
 const openai = new OpenAI({
   apiKey: env.OPENAI_API_KEY ?? "missing-key",
 });
 
-export async function createPlan(transcript: string): Promise<ExecutionPlanInput> {
-  if (true) { // Unconditionally run the predefined plan for demo purposes
+export async function createPlan(
+  transcript: string,
+  options: { clerkUserId?: string } = {},
+): Promise<ExecutionPlanInput> {
+  if (process.env.PLANNER_DEMO === "true") {
     return {
       actions: [
         {
@@ -101,6 +105,9 @@ export async function createPlan(transcript: string): Promise<ExecutionPlanInput
   if (!env.OPENAI_API_KEY) {
     throw new PlannerError("OPENAI_API_KEY is not configured");
   }
+
+  const memoryContext = await buildMemoryContext(options.clerkUserId, transcript);
+
   const response = await openai.chat.completions.create({
     model: env.OPENAI_MODEL,
     temperature: 0,
@@ -111,7 +118,7 @@ export async function createPlan(transcript: string): Promise<ExecutionPlanInput
         { role: "user" as const, content: ex.input },
         { role: "assistant" as const, content: JSON.stringify(ex.output) },
       ]),
-      { role: "user", content: buildPlannerUserPrompt(transcript) },
+      { role: "user", content: buildPlannerUserPrompt(transcript, memoryContext) },
     ],
   });
 

@@ -3,7 +3,7 @@ node_modules/
 
 # python (local-stt)
 local-stt/venv/
-local-stt/.venv/
+local-stt
 local-stt/dist/
 local-stt/build/
 local-stt/__pycache__/
@@ -44,3 +44,4 @@ next-env.d.ts
  
 
 /client-old
+/local-stt-nvidia-rust/target

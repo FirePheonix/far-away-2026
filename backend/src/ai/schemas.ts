@@ -21,6 +21,9 @@ export const toolNameSchema = z.enum([
   "slack_send_message",
   "github_create_issue",
   "notion_create_page",
+  "obsidian.search_notes",
+  "obsidian.append_to_note",
+  "obsidian.write_daily_note",
   "request_user_input"
 ]);
 

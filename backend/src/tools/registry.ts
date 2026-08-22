@@ -17,6 +17,7 @@ import { slackTool } from "./slack.tool.js";
 import { githubTool } from "./github.tool.js";
 import { notionTool } from "./notion.tool.js";
 import { pendingTaskTool } from "./pending-task.tool.js";
+import { obsidianTools } from "./obsidian.tool.js";
 import type { AnyToolDefinition, ToolMetadata } from "./types.js";
 import { createExecutionContext } from "../utils/context.js";
 
@@ -29,6 +30,7 @@ const allTools: AnyToolDefinition[] = [
   slackTool,
   githubTool,
   notionTool,
+  ...obsidianTools,
   pendingTaskTool,
 ];
 

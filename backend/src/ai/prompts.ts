@@ -120,6 +120,32 @@ const TOOL_CATALOG = [
       replacements: "object map (optional)",
     },
   },
+  {
+    tool: "obsidian.search_notes",
+    description: "Search for notes in the user's local Obsidian vault by filename or content. Returns matching note paths and snippets. Requires the desktop app to be running.",
+    params: {
+      query: "string",
+      maxResults: "number (optional, default 10)",
+      vaultName: "string (optional — required when user has multiple vaults)",
+    },
+  },
+  {
+    tool: "obsidian.append_to_note",
+    description: "Append markdown content to a specific note in the user's Obsidian vault. Use obsidian.search_notes first when you only know the name, not the exact path.",
+    params: {
+      notePath: "string — relative path inside the vault (e.g. 'Projects/Alpha.md')",
+      content: "string — markdown to append",
+      vaultName: "string (optional — required when user has multiple vaults)",
+    },
+  },
+  {
+    tool: "obsidian.write_daily_note",
+    description: "Append content to today's daily note in the user's Obsidian vault (auto-creates the file if missing). Ideal for logging meetings, journal entries, quick thoughts.",
+    params: {
+      content: "string — markdown to append",
+      vaultName: "string (optional — required when user has multiple vaults)",
+    },
+  },
 ] as const;
 
 export function buildPlannerSystemPrompt(): string {
@@ -154,6 +180,9 @@ RULES:
 10. Prefer docs.create_document when user asks to create a doc/document.
 11. Use docs.append_text or docs.insert_template for adding content to docs.
 12. Order matters: fetch data before sending emails or creating events.
+13. Prefer obsidian.write_daily_note for logging, journaling, or recording meeting notes in Obsidian.
+14. Use obsidian.search_notes before obsidian.append_to_note when the user refers to a note by name but you do not know the exact file path.
+15. For Obsidian tools: if the user has multiple vaults and you are unsure which vault to use, call request_user_input first to ask for the vault name. If only one vault exists, omit vaultName.
 
 AVAILABLE TOOLS:
 ${JSON.stringify(TOOL_CATALOG, null, 2)}
@@ -212,7 +241,11 @@ export const PLANNER_EXAMPLES = [
   },
 ] as const;
 
-export function buildPlannerUserPrompt(transcript: string): string {
+export function buildPlannerUserPrompt(transcript: string, memoryContext?: string): string {
   const now = new Date().toISOString();
-  return `Current time: ${now}\n\nUser request:\n"${transcript}"\n\nReturn the JSON plan.`;
+  const memory = memoryContext
+    ? `\n\nLONG-TERM MEMORY\nThis is what you already know about this user from earlier sessions. Use it to fill in details the user did not repeat (for example an email address you have seen before) instead of calling request_user_input.\n\n${memoryContext}`
+    : "";
+
+  return `Current time: ${now}${memory}\n\nUser request:\n"${transcript}"\n\nReturn the JSON plan.`;
 }
