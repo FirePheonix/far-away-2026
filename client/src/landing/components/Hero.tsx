@@ -60,7 +60,7 @@ const Hero = () => {
       >
         <div className="absolute inset-0 z-0">
           <img
-            src={assets.vercel.visuals.hero_bg}
+            src="/hero-bg-artwork.svg"
             alt="Abstract Background"
             className="w-full h-full object-cover"
           />

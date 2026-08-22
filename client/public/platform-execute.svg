@@ -1,0 +1,39 @@
+<svg width="640" height="480" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>A three-step checklist ticking off items in sequence</title>
+  <desc>Three rows representing routed tasks light up and receive checkmarks one after another, showing Clawvio executing steps across connected apps.</desc>
+  <style>
+    .row { fill: #ffffff; stroke: #F0997B; stroke-width: 1; }
+    .r1 { animation: fillrow 2.7s ease-out infinite; }
+    .r2 { animation: fillrow 2.7s ease-out infinite .6s; }
+    .r3 { animation: fillrow 2.7s ease-out infinite 1.2s; }
+    @keyframes fillrow { 0%,20% { opacity:.45; } 35%,100% { opacity:1; } }
+    .check { fill:none; stroke:#ffffff; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:24; stroke-dashoffset:24; }
+    .c1 { animation: tick 2.7s ease-out infinite; }
+    .c2 { animation: tick 2.7s ease-out infinite .6s; }
+    .c3 { animation: tick 2.7s ease-out infinite 1.2s; }
+    @keyframes tick { 0%,20% { stroke-dashoffset:24; opacity:0; } 35%,100% { stroke-dashoffset:0; opacity:1; } }
+    .label { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; fill: #4A1B0C; }
+    .sub { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; fill: #997A6C; }
+  </style>
+
+  <rect x="0" y="0" width="640" height="480" rx="24" fill="#FBEAE3"/>
+  <text x="320" y="80" font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="15" font-weight="600" fill="#4A1B0C" text-anchor="middle">Routed to your connected apps</text>
+
+  <rect class="row r1" x="140" y="130" width="360" height="70" rx="14"/>
+  <text class="label" x="172" y="158">Send follow-up email</text>
+  <text class="sub" x="172" y="178">Gmail</text>
+  <circle cx="460" cy="165" r="17" fill="#D85A30"/>
+  <path class="check c1" d="M452 165L458 171L469 156"/>
+
+  <rect class="row r2" x="140" y="210" width="360" height="70" rx="14"/>
+  <text class="label" x="172" y="238">Add task to board</text>
+  <text class="sub" x="172" y="258">Notion</text>
+  <circle cx="460" cy="245" r="17" fill="#D85A30"/>
+  <path class="check c2" d="M452 245L458 251L469 236"/>
+
+  <rect class="row r3" x="140" y="290" width="360" height="70" rx="14"/>
+  <text class="label" x="172" y="318">Update calendar hold</text>
+  <text class="sub" x="172" y="338">Calendar</text>
+  <circle cx="460" cy="325" r="17" fill="#D85A30"/>
+  <path class="check c3" d="M452 325L458 331L469 316"/>
+</svg>

@@ -2,6 +2,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import assets from '../data/assets.json';
+import ScatteredNodesBackground from './ScatteredNodesBackground';
 
 const Testimonial = () => {
   return (
@@ -12,14 +13,7 @@ const Testimonial = () => {
       transition={{ duration: 0.8 }}
       className="relative w-full rounded-[2.5rem] overflow-hidden min-h-[600px] flex items-end p-8 md:p-16"
     >
-      <div className="absolute inset-0 z-0">
-        <img
-          src={assets.vercel.sections.testimonial_bg}
-          alt="Testimonial Background"
-          className="w-full h-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-      </div>
+      <ScatteredNodesBackground />
 
       <div className="relative z-10 max-w-4xl">
         <div className="mb-6">
@@ -34,8 +28,8 @@ const Testimonial = () => {
         </h3>
 
         <div className="flex flex-col">
-          <span className="text-white font-semibold text-lg">Aarav Mehta</span>
-          <span className="text-white/70 text-sm">Operations Lead at Northline Labs</span>
+          <span className="text-white font-semibold text-lg">CEO</span>
+          <span className="text-white/70 text-sm">Clawvio</span>
         </div>
       </div>
     </motion.div>

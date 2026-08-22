@@ -49,9 +49,9 @@ const Footer = () => {
 
           <div className="w-48 h-48 md:w-64 md:h-64 relative">
             <img
-              src={assets.vercel.visuals.decorative_flower}
+              src="/footer-logo-image.jpg"
               alt="Clawvio Flower"
-              className="w-full h-full object-cover rounded-full mix-blend-multiply opacity-80"
+              className="w-full h-full object-cover mix-blend-multiply opacity-80"
             />
           </div>
         </div>

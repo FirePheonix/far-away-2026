@@ -11,28 +11,28 @@ const services = [
     title: "Capture",
     description:
       "Capture requests from voice or text and preserve context from meetings, notes, and tasks in one timeline.",
-    image: assets.vercel.services.discover,
+    image: "/platform-capture.svg",
   },
   {
     id: "02",
     title: "Understand",
     description:
       "Clawvio translates natural language into structured actions with clear intent, dependencies, and output.",
-    image: assets.vercel.services.build,
+    image: "/platform-understand.svg",
   },
   {
     id: "03",
     title: "Execute",
     description:
       "Run workflows across Gmail, Calendar, Meet, Sheets, Docs, Slack, GitHub, and Notion from one command surface.",
-    image: assets.vercel.services.deploy,
+    image: "/platform-execute.svg",
   },
   {
     id: "04",
     title: "Learn",
     description:
       "Every run becomes reusable knowledge so your personal and team knowledge base compounds over time.",
-    image: assets.vercel.services.optimise,
+    image: "/platform-learn.svg",
   },
 ];
 
@@ -100,13 +100,12 @@ const Services = () => {
               transition={{ duration: 0.5, ease: "easeInOut" }}
               className="absolute inset-0 flex flex-col"
             >
-              <div className="w-full h-[400px] rounded-[2rem] overflow-hidden mb-8 relative">
+              <div className="w-full flex-1 min-h-0 rounded-[2rem] overflow-hidden mb-8 relative flex items-center">
                 <img
                   src={services[activeService].image}
                   alt={services[activeService].title}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
-                <div className="absolute inset-0 bg-black/5" />
               </div>
 
               <div className="pl-2">

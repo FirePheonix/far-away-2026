@@ -62,14 +62,16 @@ const CaseStudySection = () => {
             className="relative aspect-[4/5] md:aspect-square lg:aspect-[4/5] rounded-[2.5rem] overflow-hidden"
           >
             <img
-              src={assets.vercel.sections.case_study_hamilton}
+              src="/clawvio-memory.svg"
               alt="Knowledge Graph View"
-              className="absolute inset-0 w-full h-full object-cover"
+              className="absolute inset-0 h-6/8 object-cover top-1/2 -translate-y-1/2"
             />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-white text-3xl font-serif flex items-center gap-2">
-                <span className="text-4xl">*</span> Clawvio Memory
-              </div>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <img
+                src="/logo-light.png"
+                alt="Clawvio Logo"
+                className="w-115 translate-y-4 object-contain"
+              />
             </div>
           </FadeIn>
         </div>

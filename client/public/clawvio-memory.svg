@@ -1,0 +1,50 @@
+<svg width="680" height="420" viewBox="0 0 680 420" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Scattered work converging into Clawvio's shared memory</title>
+  <desc>Six nodes representing mail, calendar, tasks, chat, notes and files orbit a central Clawvio node, connected by animated flowing lines.</desc>
+  <style>
+    .flow { stroke: #D85A30; stroke-width: 1; stroke-dasharray: 4 6; opacity: 0.45; animation: flowdash 1.8s linear infinite; }
+    @keyframes flowdash { to { stroke-dashoffset: -20; } }
+    .pulse { fill: none; stroke: #D85A30; stroke-width: 1; transform-origin: 340px 220px; animation: pulsering 2.6s ease-out infinite; }
+    .pulse2 { animation-delay: 1.3s; }
+    @keyframes pulsering { 0% { r: 52; opacity: .55; } 100% { r: 92; opacity: 0; } }
+    .node-bg { fill: #ffffff; stroke: #D3D1C7; stroke-width: 1; }
+    .label { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px; fill: #5F5E5A; text-anchor: middle; }
+    .center-label { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; fill: #ffffff; text-anchor: middle; }
+  </style>
+
+  <line class="flow" x1="340" y1="220" x2="490" y2="220"/>
+  <line class="flow" x1="340" y1="220" x2="415" y2="90"/>
+  <line class="flow" x1="340" y1="220" x2="265" y2="90"/>
+  <line class="flow" x1="340" y1="220" x2="190" y2="220"/>
+  <line class="flow" x1="340" y1="220" x2="265" y2="350"/>
+  <line class="flow" x1="340" y1="220" x2="415" y2="350"/>
+
+  <circle class="pulse" cx="340" cy="220" r="52"/>
+  <circle class="pulse pulse2" cx="340" cy="220" r="52"/>
+
+  <circle cx="340" cy="220" r="48" fill="#ffffff" stroke="#D85A30" stroke-width="2"/>
+  <!-- Logo image will be layered on top in React -->
+
+  <circle class="node-bg" cx="490" cy="220" r="22"/>
+  <circle class="node-bg" cx="415" cy="90" r="22"/>
+  <circle class="node-bg" cx="265" cy="90" r="22"/>
+  <circle class="node-bg" cx="190" cy="220" r="22"/>
+  <circle class="node-bg" cx="265" cy="350" r="22"/>
+  <circle class="node-bg" cx="415" cy="350" r="22"/>
+
+  <g fill="#D85A30">
+    <path transform="translate(478,208)" d="M0 3a2 2 0 012-2h20a2 2 0 012 2v18a2 2 0 01-2 2H2a2 2 0 01-2-2V3zm2-0.5l10 8 10-8" fill="none" stroke="#D85A30" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(403,78)"><rect x="0" y="2" width="24" height="20" rx="3" fill="none" stroke="#D85A30" stroke-width="1.6"/><line x1="0" y1="8" x2="24" y2="8" stroke="#D85A30" stroke-width="1.6"/><line x1="6" y1="0" x2="6" y2="5" stroke="#D85A30" stroke-width="1.6" stroke-linecap="round"/><line x1="18" y1="0" x2="18" y2="5" stroke="#D85A30" stroke-width="1.6" stroke-linecap="round"/></g>
+    <g transform="translate(253,78)" stroke="#D85A30" stroke-width="1.6" fill="none" stroke-linecap="round"><rect x="1" y="1" width="22" height="22" rx="4"/><path d="M6 12h12M6 17h8"/><path d="M15 6l2 2 4-4" stroke-linejoin="round"/></g>
+    <g transform="translate(178,208)" stroke="#D85A30" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2H9l-5 5v-5H4a2 2 0 01-2-2V4z"/></g>
+    <g transform="translate(253,338)" stroke="#D85A30" stroke-width="1.6" fill="none" stroke-linecap="round"><rect x="2" y="1" width="20" height="22" rx="2"/><line x1="7" y1="7" x2="17" y2="7"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="17" x2="13" y2="17"/></g>
+    <g transform="translate(403,338)" stroke="#D85A30" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6a2 2 0 012-2h6l2 3h9a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></g>
+  </g>
+
+  <text class="label" x="490" y="256">Mail</text>
+  <text class="label" x="415" y="126">Calendar</text>
+  <text class="label" x="265" y="126">Tasks</text>
+  <text class="label" x="190" y="256">Chat</text>
+  <text class="label" x="265" y="386">Notes</text>
+  <text class="label" x="415" y="386">Files</text>
+</svg>

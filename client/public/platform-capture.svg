@@ -1,0 +1,49 @@
+<svg width="640" height="480" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Voice waveform being captured into a structured document</title>
+  <desc>Animated audio bars inside a capture panel flow along a connecting line into a document panel, representing Clawvio capturing conversation into structured notes.</desc>
+  <style>
+    .bar { fill: #D85A30; transform-box: fill-box; transform-origin: bottom; }
+    .b1 { animation: pulse1 1.2s ease-in-out infinite; }
+    .b2 { animation: pulse2 1.2s ease-in-out infinite .12s; }
+    .b3 { animation: pulse3 1.2s ease-in-out infinite .24s; }
+    .b4 { animation: pulse4 1.2s ease-in-out infinite .36s; }
+    .b5 { animation: pulse5 1.2s ease-in-out infinite .48s; }
+    @keyframes pulse1 { 0%,100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+    @keyframes pulse2 { 0%,100% { transform: scaleY(.7); } 50% { transform: scaleY(1.2); } }
+    @keyframes pulse3 { 0%,100% { transform: scaleY(1.1); } 50% { transform: scaleY(.5); } }
+    @keyframes pulse4 { 0%,100% { transform: scaleY(.5); } 50% { transform: scaleY(1.15); } }
+    @keyframes pulse5 { 0%,100% { transform: scaleY(.9); } 50% { transform: scaleY(.35); } }
+    .flow { stroke: #D85A30; stroke-width: 1.5; stroke-dasharray: 6 7; opacity: .6; animation: dash 1.4s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -26; } }
+    .label { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; fill: #7A5647; text-anchor: middle; }
+  </style>
+
+  <rect x="0" y="0" width="640" height="480" rx="24" fill="#FBEAE3"/>
+
+  <rect x="90" y="170" width="180" height="180" rx="16" fill="#ffffff" stroke="#F0997B" stroke-width="1"/>
+  <text class="label" x="180" y="150" font-weight="600" fill="#4A1B0C">Your voice</text>
+
+  <rect class="bar b1" x="140" y="240" width="10" height="60" rx="5"/>
+  <rect class="bar b2" x="160" y="220" width="10" height="80" rx="5"/>
+  <rect class="bar b3" x="180" y="205" width="10" height="95" rx="5"/>
+  <rect class="bar b4" x="200" y="220" width="10" height="80" rx="5"/>
+  <rect class="bar b5" x="220" y="240" width="10" height="60" rx="5"/>
+  <line x1="140" y1="300" x2="230" y2="300" stroke="#F0997B" stroke-width="1"/>
+
+  <path class="flow" fill="none" d="M270 260 C 330 260, 330 260, 390 260"/>
+
+  <rect x="390" y="150" width="170" height="220" rx="16" fill="#ffffff" stroke="#F0997B" stroke-width="1"/>
+  <text class="label" x="475" y="130" font-weight="600" fill="#4A1B0C">Structured capture</text>
+  <circle cx="415" cy="185" r="4" fill="#D85A30"/>
+  <line x1="428" y1="185" x2="535" y2="185" stroke="#E7CFC3" stroke-width="2"/>
+  <circle cx="415" cy="215" r="4" fill="#D85A30"/>
+  <line x1="428" y1="215" x2="535" y2="215" stroke="#E7CFC3" stroke-width="2"/>
+  <circle cx="415" cy="245" r="4" fill="#F0997B"/>
+  <line x1="428" y1="245" x2="510" y2="245" stroke="#E7CFC3" stroke-width="2"/>
+  <circle cx="415" cy="275" r="4" fill="#F0997B"/>
+  <line x1="428" y1="275" x2="525" y2="275" stroke="#E7CFC3" stroke-width="2"/>
+  <circle cx="415" cy="305" r="4" fill="#F0997B"/>
+  <line x1="428" y1="305" x2="495" y2="305" stroke="#E7CFC3" stroke-width="2"/>
+  <rect x="405" y="335" width="80" height="20" rx="10" fill="#FAECE7"/>
+  <text x="445" y="349" font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="11" fill="#993C1D" text-anchor="middle">Summary</text>
+</svg>
