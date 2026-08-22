@@ -2,6 +2,12 @@
 //!
 //! Live pipeline: while you speak, peel ~10s chunks and decode them in the
 //! background so stop → clipboard is usually just the leftover tail.
+//!
+//! Two recording modes (set at the moment the first hotkey press starts
+//! recording):
+//!   OCR     (Ctrl+Shift+Space)  → transcript copied to clipboard on stop.
+//!   Command (Ctrl+Shift+Enter)  → transcript POSTed to backend /api/assistant
+//!                                  via the desktop token from config.json.
 
 use anyhow::Result;
 use arboard::Clipboard;
@@ -14,8 +20,9 @@ use std::time::Instant;
 
 use crate::asr::AsrEngine;
 use crate::audio::Recorder;
-use crate::hotkey::{Hotkeys, UiWake};
-use crate::overlay::{Overlay, OverlayState, CARD_W};
+use crate::config;
+use crate::hotkey::{HotkeyKind, Hotkeys, UiWake};
+use crate::overlay::{Overlay, OverlayState, RecordMode, CARD_W, CARD_CHROME_H};
 use crate::tray::Tray;
 use crate::util::SAMPLE_RATE;
 
@@ -26,6 +33,7 @@ const LIVE_CHUNK_SAMPLES: usize = (SAMPLE_RATE as usize) * (LIVE_CHUNK_SECS as u
 enum WorkerMsg {
     EngineReady(Result<Arc<AsrEngine>, String>),
     ChunkDone { speaker: String, id: usize, segments: Vec<crate::asr::Segment> },
+    CommandSent { ok: bool, message: String },
 }
 
 /// One dictation: chunks decoded live, assembled in order on stop.
@@ -39,10 +47,12 @@ struct LiveSession {
     expected_user: Option<usize>,
     expected_other: Option<usize>,
     finishing: bool,
+    /// Mode that was active when recording started.
+    mode: RecordMode,
 }
 
 impl LiveSession {
-    fn new() -> Self {
+    fn new(mode: RecordMode) -> Self {
         Self {
             next_id_user: 0,
             next_id_other: 0,
@@ -53,6 +63,7 @@ impl LiveSession {
             expected_user: None,
             expected_other: None,
             finishing: false,
+            mode,
         }
     }
 
@@ -76,6 +87,19 @@ impl LiveSession {
             format!("{{\n{}\n}}", lines.join(",\n"))
         }
     }
+
+    /// Plain user-only transcript (no JSON wrapper), used for Command mode.
+    fn user_transcript(&self) -> String {
+        let mut sorted = self.segments.clone();
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        sorted
+            .iter()
+            .filter(|(_, speaker, _)| speaker == "user")
+            .map(|(_, _, txt)| txt.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 pub struct LocalSttApp {
@@ -92,6 +116,9 @@ pub struct LocalSttApp {
     started: Instant,
     last_frame: Instant,
     wake_installed: bool,
+    /// True while the overlay is visible; flipped to false once we've sent the
+    /// one-shot Focus command so we don't steal focus every frame.
+    did_focus: bool,
 }
 
 impl LocalSttApp {
@@ -131,6 +158,7 @@ impl LocalSttApp {
             started: Instant::now(),
             last_frame: Instant::now(),
             wake_installed: false,
+            did_focus: false,
         })
     }
 
@@ -150,7 +178,7 @@ impl LocalSttApp {
         let secs = audio.len() as f32 / SAMPLE_RATE as f32;
         let speaker_str = speaker.to_string();
         let abs_chunk_start = id as f32 * LIVE_CHUNK_SECS as f32;
-        
+
         println!("[local-stt] queue {speaker_str} chunk #{id} ({secs:.1}s) — decoding while you speak");
         thread::spawn(move || {
             let label = format!("{speaker_str}#{id}");
@@ -177,15 +205,20 @@ impl LocalSttApp {
 
     /// Peel full live chunks from the mic/loopback buffers
     fn pump_live_chunks(&mut self) {
+        // Drain unconditionally every frame to keep the bounded audio channel
+        // from filling up, even when the engine is still loading or not recording.
+        self.recorder.drain();
+
         if !self.recording || self.engine.is_none() {
             return;
         }
+
         while self.recorder.buffered_user() >= LIVE_CHUNK_SAMPLES {
             let Some(chunk) = self.recorder.take_prefix_user(LIVE_CHUNK_SAMPLES) else {
                 break;
             };
             let id = {
-                let s = self.session.get_or_insert_with(LiveSession::new);
+                let s = self.session.get_or_insert_with(|| LiveSession::new(RecordMode::Ocr));
                 let id = s.next_id_user;
                 s.next_id_user += 1;
                 id
@@ -197,7 +230,7 @@ impl LocalSttApp {
                 break;
             };
             let id = {
-                let s = self.session.get_or_insert_with(LiveSession::new);
+                let s = self.session.get_or_insert_with(|| LiveSession::new(RecordMode::Ocr));
                 let id = s.next_id_other;
                 s.next_id_other += 1;
                 id
@@ -206,7 +239,7 @@ impl LocalSttApp {
         }
     }
 
-    fn toggle_record(&mut self) {
+    fn toggle_record(&mut self, kind: HotkeyKind) {
         if self.engine.is_none() {
             println!("[local-stt] model not ready yet — wait for 'Parakeet INT8 ready'");
             return;
@@ -217,20 +250,28 @@ impl LocalSttApp {
         }
 
         if !self.recording {
+            let mode = match kind {
+                HotkeyKind::Ocr => RecordMode::Ocr,
+                HotkeyKind::Command => RecordMode::Command,
+            };
             self.recording = true;
-            self.session = Some(LiveSession::new());
+            self.session = Some(LiveSession::new(mode));
             self.recorder.start();
-            self.overlay.show_listening();
-            self.tray.set_tooltip("local-stt - recording (live chunks)...");
+            self.overlay.show_listening(mode);
+            let mode_label = match mode {
+                RecordMode::Ocr => "OCR",
+                RecordMode::Command => "Command",
+            };
+            self.tray.set_tooltip(&format!("local-stt - recording [{mode_label}] (live chunks)..."));
             println!(
-                "[local-stt] recording... (live {LIVE_CHUNK_SECS}s chunks while you speak)"
+                "[local-stt] recording [{mode_label}]... (live {LIVE_CHUNK_SECS}s chunks while you speak)"
             );
         } else {
+            // Stop — mode is already locked in the session
             self.recording = false;
-            // Flush any remaining audio as the final chunk
             let (tail_user, tail_other) = self.recorder.stop();
-            let (id_u, exp_u, id_o, exp_o) = {
-                let s = self.session.get_or_insert_with(LiveSession::new);
+            let (id_u, _exp_u, id_o, _exp_o) = {
+                let s = self.session.get_or_insert_with(|| LiveSession::new(RecordMode::Ocr));
                 let id_u = s.next_id_user;
                 let id_o = s.next_id_other;
                 s.next_id_user += 1;
@@ -281,24 +322,92 @@ impl LocalSttApp {
         if !session.finishing || !session.all_done() {
             return;
         }
-        let text = session.joined();
-        let ok = !text.is_empty();
-        if ok {
-            if let Ok(mut cb) = Clipboard::new() {
-                let _ = cb.set_text(&text);
-            }
-            println!("[local-stt] copied:\n{text}");
-        } else {
-            println!("[local-stt] nothing heard");
+
+        match session.mode {
+            RecordMode::Ocr => self.finalize_ocr(),
+            RecordMode::Command => self.finalize_command(),
         }
+    }
+
+    fn finalize_ocr(&mut self) {
+        let Some(session) = self.session.take() else { return };
+        let text = session.joined();
+        let ok = if !text.is_empty() {
+            let clipboard_ok = Clipboard::new()
+                .and_then(|mut cb| cb.set_text(&text))
+                .is_ok();
+            if clipboard_ok {
+                log::debug!("[local-stt] OCR copied to clipboard");
+            } else {
+                log::warn!("[local-stt] OCR — clipboard write failed");
+                println!("[local-stt] OCR — clipboard write failed");
+            }
+            clipboard_ok
+        } else {
+            println!("[local-stt] OCR — nothing heard");
+            false
+        };
         self.overlay.show_result(text, ok, self.now());
+        self.update_tray_ready_label();
+    }
+
+    fn finalize_command(&mut self) {
+        let Some(session) = self.session.take() else { return };
+        let transcript = session.user_transcript();
+        if transcript.is_empty() {
+            println!("[local-stt] Command — nothing heard");
+            self.overlay.show_result(String::new(), false, self.now());
+            self.update_tray_ready_label();
+            return;
+        }
+
+        println!("[local-stt] Command — sending to backend ({} chars)", transcript.len());
+        log::debug!("[local-stt] Command transcript: {transcript:?}");
+
+        // Reload config fresh so desktop_token and backend_url are up to date
+        // (user may have paired since startup).
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+
+        thread::spawn(move || {
+            let result = send_command_to_backend(&backend_url, token.as_deref(), &transcript);
+            let (ok, message) = match result {
+                Ok(msg) => {
+                    log::debug!("[local-stt] Command sent OK: {msg}");
+                    println!("[local-stt] Command sent OK");
+                    (true, msg)
+                }
+                Err(e) => {
+                    // Don't include the raw error chain in the message shown to the
+                    // user or stdout — it may contain URL/header fragments.
+                    let display = format!("{e}");
+                    log::debug!("[local-stt] Command failed (detail): {e:#}");
+                    println!("[local-stt] Command failed: {display}");
+                    (false, display)
+                }
+            };
+            let _ = tx.send(WorkerMsg::CommandSent { ok, message });
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+
+        // Show "Sending…" in the overlay while the HTTP request is in-flight.
+        self.overlay.show_sending();
+        // session already taken above, so we're clean for the next recording.
+    }
+
+    fn update_tray_ready_label(&self) {
         let tip = self
             .engine
             .as_ref()
             .map(|e| format!("local-stt - {}", e.label()))
             .unwrap_or_else(|| "local-stt - ready".into());
         self.tray.set_tooltip(&tip);
-        self.session = None;
     }
 
     fn poll_workers(&mut self) {
@@ -332,31 +441,59 @@ impl LocalSttApp {
                     }
                     self.try_finalize();
                 }
+                WorkerMsg::CommandSent { ok, message } => {
+                    self.overlay.show_result(message, ok, self.now());
+                    self.update_tray_ready_label();
+                }
             }
         }
     }
 
-    fn sync_viewport(&self, ctx: &egui::Context) {
+    fn sync_viewport(&mut self, ctx: &egui::Context) {
         let visible = self.overlay.is_visible();
-        let h = self.overlay.desired_height();
 
         if visible {
-            let sw = ctx
-                .input(|i| i.viewport().monitor_size.map(|s| s.x))
-                .unwrap_or(1920.0)
-                .max(800.0);
-            let x = ((sw - CARD_W) * 0.5).max(0.0);
-            let y = 70.0;
+            let (sw, sh) = ctx.input(|i| {
+                let ms = i.viewport().monitor_size.unwrap_or(egui::vec2(1920.0, 1080.0));
+                (ms.x.max(800.0), ms.y.max(400.0))
+            });
+
+            // ── X: center on screen, but clamp so the full card width is always visible ──
+            let x = ((sw - CARD_W) * 0.5).clamp(0.0, (sw - CARD_W).max(0.0));
+
+            // ── Y: 70px from top, card must not overflow screen bottom ──
+            let y = 70.0_f32;
+            // Maximum card height = from y to 8px above screen bottom
+            let max_h = (sh - y - 8.0).max(CARD_W /* fallback */);
+
+            // Use last frame's rendered size, capped to max_h
+            let used_h = ctx.used_size().y;
+            let h = if used_h > 4.0 {
+                (used_h + 4.0).max(self.overlay.desired_height()).min(max_h)
+            } else {
+                self.overlay.desired_height().min(max_h)
+            };
+
+            // Tell the overlay how tall the scroll area can grow:
+            // available = capped window height minus all fixed chrome
+            self.overlay.max_scroll_h = (max_h - CARD_CHROME_H).max(80.0);
+
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(x, y)));
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(CARD_W, h)));
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-            ctx.send_viewport_cmd(ViewportCommand::Focus);
+            ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(false));
+            if !self.did_focus {
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+                self.did_focus = true;
+            }
         } else {
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(8.0, 8.0)));
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+            ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(true));
+            self.did_focus = false;
         }
     }
 }
@@ -378,8 +515,8 @@ impl eframe::App for LocalSttApp {
         self.poll_workers();
         self.pump_live_chunks();
 
-        if self.hotkeys.poll_toggle() {
-            self.toggle_record();
+        if let Some(kind) = self.hotkeys.poll_toggle() {
+            self.toggle_record(kind);
         }
         if self.tray.poll_quit() {
             ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -408,5 +545,77 @@ impl eframe::App for LocalSttApp {
                 ui.multiply_opacity(self.overlay.alpha);
                 self.overlay.ui(ctx, ui);
             });
+    }
+}
+
+// ── Backend HTTP call ────────────────────────────────────────────────────────
+
+/// POST the transcript as a command to `POST /api/assistant`.
+/// Returns a short human-readable status string on success.
+///
+/// # Security
+/// The `token` is a Bearer credential. We refuse to send it over plain HTTP
+/// to non-loopback hosts to prevent accidental credential exposure.
+fn send_command_to_backend(
+    backend_url: &str,
+    token: Option<&str>,
+    transcript: &str,
+) -> anyhow::Result<String> {
+    use reqwest::blocking::Client;
+
+    // Validate scheme before attaching credentials.
+    let parsed = backend_url
+        .parse::<reqwest::Url>()
+        .map_err(|e| anyhow::anyhow!("invalid backend_url: {e}"))?;
+
+    let scheme = parsed.scheme();
+    let host = parsed.host_str().unwrap_or("");
+    let is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+
+    if scheme != "https" && !is_loopback {
+        anyhow::bail!(
+            "backend_url must use https:// for non-localhost hosts (got {scheme}://). \
+             Update backend_url in ~/.local-stt/config.json."
+        );
+    }
+
+    let url = format!("{}/api/assistant", backend_url.trim_end_matches('/'));
+
+    let mut req = Client::new()
+        .post(&url)
+        .header("Content-Type", "application/json");
+
+    if let Some(t) = token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+
+    let body = serde_json::json!({
+        "transcript": transcript,
+        "source": "local-stt"
+    });
+
+    let resp = req
+        .body(body.to_string())
+        .send()
+        .map_err(|e| anyhow::anyhow!("HTTP send failed: {e}"))?;
+
+    let status = resp.status();
+    let body_text = resp.text().unwrap_or_default();
+
+    if status.is_success() {
+        // Try to extract a human-readable summary from the JSON response.
+        let summary = serde_json::from_str::<serde_json::Value>(&body_text)
+            .ok()
+            .and_then(|v| {
+                v.get("message")
+                    .or_else(|| v.get("status"))
+                    .or_else(|| v.get("result"))
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| format!("Sent ({status})"));
+        Ok(summary)
+    } else {
+        Err(anyhow::anyhow!("Backend returned {status}"))
     }
 }
