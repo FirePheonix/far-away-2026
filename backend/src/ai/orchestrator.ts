@@ -88,20 +88,32 @@ function buildSystemPrompt(memoryContext: string): string {
 
 CURRENT TIME: ${now.toISOString()} (UTC${tzSign}${tzHH}:${tzMM})
 
+CRITICAL: You MUST use tools to complete requests. NEVER just reply with text when you can take action.
+If the user asks you to send an email, list events, create a doc — call the tool. Do not describe what you would do.
+
 BEHAVIOUR:
-- Think step by step. Decide which tool to call next based on what you already know and what prior tool results tell you.
-- After each tool result, re-read the result and decide the next step. Do NOT plan the full sequence upfront.
-- If a tool returns data you need for the next step (an email address, a document ID, etc.), use that data directly.
+- Think step by step. Decide which tool to call next based on what you already know and prior tool results.
+- After each tool result, use the data from it directly in the next step (e.g. if you got an email address, use it).
 - NEVER guess or fabricate email addresses, IDs, or URLs. If you don't know, call request_user_input.
-- ALWAYS call confirm_action before gmail.send_email and before calendar.create_event with attendees.
-- After collecting any new fact from the user (email, phone, preference), call kb_update immediately.
-- When you are done with all actions, respond with a plain text summary — do NOT call any more tools.
+- ALWAYS call confirm_action before gmail__send_email and before calendar__create_event when inviting attendees.
+- After collecting any new fact from the user (email, phone, preference), immediately call kb_update.
+- Only respond with plain text (no tool calls) when ALL actions have been completed successfully.
+
+TOOL NAME REFERENCE (use these exact names):
+- Email: gmail__send_email, gmail__search_email, gmail__reply_email
+- Calendar: calendar__list_events, calendar__create_event, calendar__find_free_slots
+- Sheets: sheets__search_sheet, sheets__search_all_sheets, sheets__get_last_row, sheets__append_row
+- Docs: docs__create_document, docs__append_text
+- Meet: meet__create_link
+- Obsidian: obsidian__search_notes, obsidian__append_to_note, obsidian__write_daily_note
+- Slack: slack_send_message  |  GitHub: github_create_issue  |  Notion: notion_create_page
+- Ask user: request_user_input  |  Store fact: kb_update  |  Confirm action: confirm_action
 
 HARD RULES:
-1. Never use placeholder emails like @example.com, noreply@, test@, unknown@. Always verify first.
-2. Always call confirm_action before sending emails or inviting people to calendar events.
-3. Always call kb_update after learning a new fact. Facts in the KB are shown to you every session.
-4. Do not repeat a step that already succeeded. Tool results in this conversation are real.
+1. Never use placeholder emails (@example.com, test@, unknown@). Use request_user_input if unsure.
+2. Always call confirm_action before gmail__send_email or calendar__create_event with attendees.
+3. Always call kb_update after learning a new fact from the user.
+4. Do not repeat a step that already succeeded — tool results in this conversation are real.
 
 ${memoryContext ? `${memoryContext}` : ""}`.trim();
 }
@@ -160,11 +172,14 @@ export async function runOrchestrator(
   let turnIndex = (options.priorThread?.filter((m) => m.role === "tool").length ?? 0);
 
   for (let safety = 0; safety < MAX_TURNS; safety++) {
+    const hasPriorToolResults = thread.some((m) => m.role === "tool");
     const response = await openai.chat.completions.create({
       model: env.OPENAI_MODEL,
       temperature: 0,
       tools: OPENAI_TOOL_DEFINITIONS,
-      tool_choice: "auto",
+      // Force at least one tool call on the first turn so the model can't
+      // just reply with text before doing anything.
+      tool_choice: hasPriorToolResults ? "auto" : "required",
       messages: thread,
     });
 
