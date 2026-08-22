@@ -7,20 +7,48 @@ import {
 } from "../utils/context.js";
 import type { ExecutionPlan, StepExecutionRecord } from "../types/index.js";
 import {
+  abandonAssistantRun,
   completeAssistantRun,
   startAssistantRun,
 } from "../services/assistant-runs.service.js";
 import { ASSISTANT_EVENTS, inngest } from "./inngest.js";
 
+// ---------------------------------------------------------------------------
+// Error class used to signal a user-initiated run abandonment from inside
+// the waitForEvent loop so the outer catch block can handle it cleanly.
+// ---------------------------------------------------------------------------
+class RunAbandonedError extends Error {
+  constructor(
+    public readonly reason: string,
+    public readonly runId?: string,
+    public readonly requestId?: string,
+  ) {
+    super(`Run abandoned by user: ${reason}`);
+    this.name = "RunAbandonedError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main Inngest workflow
+// ---------------------------------------------------------------------------
 export const assistantWorkflow = inngest.createFunction(
   {
     id: "assistant-voice-workflow",
     retries: 3,
+    // Kill the whole workflow if the dashboard sends a run_abandoned event
+    // whose data.requestId matches the triggering event's data.requestId.
+    cancelOn: [
+      {
+        event: ASSISTANT_EVENTS.runAbandoned,
+        match: "data.requestId",
+      },
+    ],
   },
   { event: ASSISTANT_EVENTS.voiceRequestReceived },
   async ({ event, step }) => {
     const { transcript, requestId, source, clerkUserId } = event.data;
     const persistedRequestId = clerkUserId && requestId ? requestId : undefined;
+
     const runId = persistedRequestId
       ? await step.run("start-run", async () => startAssistantRun(persistedRequestId))
       : undefined;
@@ -54,7 +82,7 @@ export const assistantWorkflow = inngest.createFunction(
             console.error(`Error executing tool ${action.tool}:`, err);
             result = { error: err instanceof Error ? err.message : String(err) };
           }
-          
+
           return {
             index: i,
             tool: action.tool,
@@ -69,17 +97,63 @@ export const assistantWorkflow = inngest.createFunction(
             ? (stepResult.result as Record<string, unknown>)
             : null;
 
+        // -----------------------------------------------------------------------
+        // waitForEvent loop — only entered when the tool is request_user_input
+        // and the tool succeeded in creating a pending_tasks row.
+        //
+        // We race three possible responses from the dashboard:
+        //   1. submit  (userInputReceived)  → inject user data and continue
+        //   2. skip    (taskSkipped)        → mark skipped and continue
+        //   3. abandon (taskAbandoned)      → throw, workflow stops
+        //   4. edit    (taskEdited)         → inject edited payload and continue
+        //
+        // All four events are matched on data.requestId so that only events
+        // originating from the same assistant request resume this workflow.
+        // The taskId is also checked inside each branch for extra safety.
+        // -----------------------------------------------------------------------
         if (action.tool === "request_user_input" && !stepOutput?.error && stepOutput?.taskId) {
-          const inputEvent = await step.waitForEvent(`wait-for-user-input-${i}`, {
-            event: ASSISTANT_EVENTS.userInputReceived,
-            timeout: "24h",
-            match: "data.requestId",
-          });
-          
-          if (inputEvent) {
-            stepOutput.userInput = inputEvent.data.payload;
+          const taskId = stepOutput.taskId as string;
+
+          // Race all four possible dashboard responses simultaneously.
+          const [submitEvent, skipEvent, abandonEvent, editEvent] = await Promise.all([
+            step.waitForEvent(`wait-for-submit-${i}`, {
+              event: ASSISTANT_EVENTS.userInputReceived,
+              timeout: "24h",
+              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
+            }),
+            step.waitForEvent(`wait-for-skip-${i}`, {
+              event: ASSISTANT_EVENTS.taskSkipped,
+              timeout: "24h",
+              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
+            }),
+            step.waitForEvent(`wait-for-abandon-${i}`, {
+              event: ASSISTANT_EVENTS.taskAbandoned,
+              timeout: "24h",
+              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
+            }),
+            step.waitForEvent(`wait-for-edit-${i}`, {
+              event: ASSISTANT_EVENTS.taskEdited,
+              timeout: "24h",
+              if: `async event.data.requestId == "${persistedRequestId}" && async event.data.taskId == "${taskId}"`,
+            }),
+          ]);
+
+          // Only one should ever fire; check in priority order.
+          if (abandonEvent) {
+            // User abandoned this specific task — treat as full run abandonment.
+            const reason: string = abandonEvent.data.reason ?? "User abandoned task";
+            throw new RunAbandonedError(reason, runId ?? undefined, persistedRequestId);
+          } else if (skipEvent) {
+            stepOutput.skipped = true;
+            stepOutput.skipReason = skipEvent.data.reason ?? "Skipped by user";
+          } else if (submitEvent) {
+            stepOutput.userInput = submitEvent.data.payload;
+          } else if (editEvent) {
+            stepOutput.userInput = editEvent.data.payload;
+            stepOutput.editedFields = editEvent.data.editedFields ?? [];
           } else {
-            stepOutput.error = "User input timeout";
+            // All four timed out (24 h).
+            stepOutput.error = "User input timeout — no response within 24 hours";
           }
         }
 
@@ -118,6 +192,25 @@ export const assistantWorkflow = inngest.createFunction(
         message,
       };
     } catch (err) {
+      if (err instanceof RunAbandonedError) {
+        // Record abandonment separately so we get the reason stored in the DB.
+        await step.run("abandon-run", async () =>
+          abandonAssistantRun({
+            requestId: err.requestId,
+            runId: err.runId,
+            reason: err.reason,
+          }),
+        );
+        // Return a structured result instead of re-throwing so Inngest marks
+        // this as a successful function completion (not a retriable error).
+        return {
+          success: false,
+          abandoned: true,
+          reason: err.reason,
+          requestId,
+        };
+      }
+
       const message = err instanceof Error ? err.message : "Assistant workflow failed";
       await step.run("fail-run", async () =>
         completeAssistantRun({
@@ -133,6 +226,11 @@ export const assistantWorkflow = inngest.createFunction(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Synchronous fallback (non-async API path) — no Inngest, no waitForEvent.
+// request_user_input steps will still create pending_tasks rows but the caller
+// is responsible for polling /assistant/tasks and re-submitting separately.
+// ---------------------------------------------------------------------------
 export async function runAssistantPipeline(
   transcript: string,
   options: {
@@ -156,7 +254,7 @@ export async function runAssistantPipeline(
     for (let i = 0; i < plan.actions.length; i++) {
       const action = plan.actions[i]!;
       const started = Date.now();
-      
+
       let result;
       try {
         result = await executeAction(action, context, i);

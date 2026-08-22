@@ -66,6 +66,34 @@ export async function startAssistantRun(requestId?: string): Promise<string | un
   }
 }
 
+export async function abandonAssistantRun(params: {
+  requestId?: string;
+  runId?: string;
+  reason: string;
+}): Promise<void> {
+  if (!params.requestId) return;
+
+  try {
+    db.prepare(`UPDATE assistant_requests SET status = 'abandoned' WHERE id = ?`).run(
+      params.requestId,
+    );
+  } catch (error) {
+    console.error("[AssistantRuns] Failed to mark request as abandoned", error);
+  }
+
+  if (!params.runId) return;
+
+  try {
+    db.prepare(`
+      UPDATE assistant_runs
+      SET success = 0, message = ?, abandonment_reason = ?, finished_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(`Abandoned: ${params.reason}`, params.reason, params.runId);
+  } catch (error) {
+    console.error("[AssistantRuns] Failed to mark run as abandoned", error);
+  }
+}
+
 export async function completeAssistantRun(params: {
   requestId?: string;
   runId?: string;

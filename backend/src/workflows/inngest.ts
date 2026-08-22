@@ -7,6 +7,36 @@ export const inngest = new Inngest({
 });
 
 export const ASSISTANT_EVENTS = {
+  /** Fired when a new voice/text request is received — triggers assistantWorkflow */
   voiceRequestReceived: "assistant/voice_request_received",
+
+  /** Fired by /tasks/:id/submit — resumes the workflow with user-provided data */
   userInputReceived: "assistant/user_input_received",
+
+  /**
+   * Fired by /tasks/:id/skip — resumes the workflow step with a skip signal.
+   * The workflow will skip the task and continue to the next action.
+   * data: { taskId, requestId, reason?: string }
+   */
+  taskSkipped: "assistant/task_skipped",
+
+  /**
+   * Fired by /tasks/:id/abandon — resumes the workflow step with an abandon signal.
+   * The workflow will throw, record the abandonment reason and stop.
+   * data: { taskId, requestId, reason: string }
+   */
+  taskAbandoned: "assistant/task_abandoned",
+
+  /**
+   * Fired by /tasks/:id/edit — resumes the workflow step with edited task data.
+   * Works like a submit but indicates the user changed the task definition first.
+   * data: { taskId, requestId, payload, editedFields?: string[] }
+   */
+  taskEdited: "assistant/task_edited",
+
+  /**
+   * Fired by /runs/:runId/abandon — triggers cancelOn to kill the whole workflow.
+   * data: { runId, requestId, reason: string }
+   */
+  runAbandoned: "assistant/run_abandoned",
 } as const;
