@@ -16,21 +16,52 @@ mod util;
 
 use anyhow::{bail, Result};
 use eframe::egui;
-use std::net::TcpListener;
 
 use crate::app::LocalSttApp;
-use crate::overlay::{CARD_H, CARD_W};
+use crate::overlay::PILL_H;
 
-fn acquire_instance_lock() -> Result<TcpListener> {
-    match TcpListener::bind(("127.0.0.1", 47915)) {
-        Ok(l) => Ok(l),
-        Err(_) => {
-            bail!(
-                "already running (another instance holds the tray lock).\n\
-                 Quit it from the system tray, or kill the old local-stt process."
-            );
-        }
+/// Single-instance guard via a Windows named mutex.
+///
+/// A named mutex (in the "Local\" namespace) is the canonical Windows mechanism
+/// for single-instance detection. Unlike a TCP port it cannot be squatted by an
+/// unprivileged process on another user session, and it is automatically released
+/// when the process exits (no TIME_WAIT residual).
+struct InstanceLock(windows::Win32::Foundation::HANDLE);
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        // SAFETY: handle was returned by CreateMutexW and is valid.
+        unsafe { let _ = windows::Win32::System::Threading::ReleaseMutex(self.0); }
+        unsafe { let _ = windows::Win32::Foundation::CloseHandle(self.0); }
     }
+}
+
+fn acquire_instance_lock() -> Result<InstanceLock> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    // Encode name as a null-terminated UTF-16 string.
+    let name: Vec<u16> = "Local\\local-stt-instance-lock\0"
+        .encode_utf16()
+        .collect();
+
+    // SAFETY: name is a valid null-terminated UTF-16 string.
+    let handle = unsafe {
+        CreateMutexW(None, true, PCWSTR(name.as_ptr()))
+            .map_err(|e| anyhow::anyhow!("CreateMutexW failed: {e}"))?
+    };
+
+    // If the mutex already existed, another instance is running.
+    if unsafe { windows::Win32::Foundation::GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { let _ = windows::Win32::Foundation::CloseHandle(handle); }
+        bail!(
+            "already running (another instance holds the tray lock).\n\
+             Quit it from the system tray, or kill the old local-stt process."
+        );
+    }
+
+    Ok(InstanceLock(handle))
 }
 
 fn main() -> Result<()> {
@@ -46,7 +77,9 @@ fn main() -> Result<()> {
 
     // Persist default config if missing
     let cfg = config::load();
-    let _ = config::save(&cfg);
+    if let Err(e) = config::save(&cfg) {
+        log::warn!("[local-stt] config save failed: {e}");
+    }
 
     println!(
         "[local-stt] running on {} - model=parakeet-int8 - Ctrl+Shift+Space to record",
@@ -57,13 +90,13 @@ fn main() -> Result<()> {
     // Starting fully hidden stops the egui loop on Windows, so hotkeys never fire.
     let viewport = egui::ViewportBuilder::default()
         .with_title("local-stt")
-        .with_inner_size([CARD_W, CARD_H])
+        .with_inner_size([1920.0, PILL_H])  // will be resized to actual screen width on first frame
         .with_position([-32000.0, -32000.0])
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()
         .with_taskbar(false)
-        .with_resizable(false)
+        .with_resizable(true)
         .with_visible(true);
 
     let native_options = eframe::NativeOptions {

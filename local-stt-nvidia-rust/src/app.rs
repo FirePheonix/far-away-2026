@@ -22,7 +22,7 @@ use crate::asr::AsrEngine;
 use crate::audio::Recorder;
 use crate::config;
 use crate::hotkey::{HotkeyKind, Hotkeys, UiWake};
-use crate::overlay::{Overlay, OverlayState, RecordMode, CARD_W, CARD_CHROME_H};
+use crate::overlay::{Overlay, OverlayState, RecordMode, PILL_H, PILL_H_RESULT_EXTRA};
 use crate::tray::Tray;
 use crate::util::SAMPLE_RATE;
 
@@ -453,34 +453,26 @@ impl LocalSttApp {
         let visible = self.overlay.is_visible();
 
         if visible {
-            let (sw, sh) = ctx.input(|i| {
-                let ms = i.viewport().monitor_size.unwrap_or(egui::vec2(1920.0, 1080.0));
-                (ms.x.max(800.0), ms.y.max(400.0))
+            let dpi = ctx.pixels_per_point();
+            let (sw_log, sh_log) = ctx.input(|i| {
+                let ms = i.viewport().monitor_size
+                    .unwrap_or(egui::vec2(1920.0 * dpi, 1080.0 * dpi));
+                (ms.x / dpi, ms.y / dpi)
             });
 
-            // ── X: center on screen, but clamp so the full card width is always visible ──
-            let x = ((sw - CARD_W) * 0.5).clamp(0.0, (sw - CARD_W).max(0.0));
+            // Pass real screen width to overlay so it can center the pill itself
+            self.overlay.screen_w = sw_log.max(400.0);
 
-            // ── Y: 70px from top, card must not overflow screen bottom ──
-            let y = 70.0_f32;
-            // Maximum card height = from y to 8px above screen bottom
-            let max_h = (sh - y - 8.0).max(CARD_W /* fallback */);
-
-            // Use last frame's rendered size, capped to max_h
-            let used_h = ctx.used_size().y;
-            let h = if used_h > 4.0 {
-                (used_h + 4.0).max(self.overlay.desired_height()).min(max_h)
-            } else {
-                self.overlay.desired_height().min(max_h)
-            };
-
-            // Tell the overlay how tall the scroll area can grow:
-            // available = capped window height minus all fixed chrome
-            self.overlay.max_scroll_h = (max_h - CARD_CHROME_H).max(80.0);
+            // Window spans full screen width, sits at top (y=0)
+            // No centering math needed — pill is drawn centered inside the window
+            let w = sw_log.max(400.0);
+            let max_h = (sh_log - 8.0).max(PILL_H);
+            let h = self.overlay.desired_height().min(max_h);
+            self.overlay.max_scroll_h = (PILL_H_RESULT_EXTRA - 80.0).max(60.0);
 
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(x, y)));
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(CARD_W, h)));
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(w, h)));
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(false));
             if !self.did_focus {
@@ -490,7 +482,6 @@ impl LocalSttApp {
         } else {
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(8.0, 8.0)));
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(true));
             self.did_focus = false;
@@ -507,6 +498,13 @@ impl eframe::App for LocalSttApp {
         if !self.wake_installed {
             *self.ui_wake.lock() = Some(ctx.clone());
             self.wake_installed = true;
+            // One-time diagnostic: log DPI and monitor size so we can verify centering math
+            let dpi = ctx.pixels_per_point();
+            let monitor = ctx.input(|i| i.viewport().monitor_size);
+            println!("[local-stt] dpi={dpi:.2}  monitor_size(physical)={monitor:?}  logical=({:.0}x{:.0})",
+                monitor.map(|m| m.x / dpi).unwrap_or(0.0),
+                monitor.map(|m| m.y / dpi).unwrap_or(0.0),
+            );
         }
 
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.05);
