@@ -174,6 +174,7 @@ export const assistantWorkflow = inngest.createFunction(
               const context = createExecutionContext(plan.actions.length, {
                 clerkUserId,
                 requestId: persistedRequestId,
+                runId: runId ?? undefined,
                 source,
               });
               for (const prev of stepsExecuted) {
@@ -458,6 +459,7 @@ export const assistantWorkflow = inngest.createFunction(
       const finalContext = createExecutionContext(plan.actions.length, {
         clerkUserId,
         requestId: persistedRequestId,
+        runId: runId ?? undefined,
         source,
       });
       for (const stepRecord of stepsExecuted) {
@@ -559,7 +561,10 @@ export async function runAssistantPipeline(
 }> {
   const runId = await startAssistantRun(options.requestId);
   const plan = await createPlan(transcript, { clerkUserId: options.clerkUserId });
-  const context = createExecutionContext(plan.actions.length, options);
+  const context = createExecutionContext(plan.actions.length, {
+    ...options,
+    runId: runId ?? undefined,
+  });
   const stepsExecuted: StepExecutionRecord[] = [];
 
   await seedRunTrace({ runId, plan });

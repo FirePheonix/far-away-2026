@@ -41,7 +41,8 @@ export interface ExecutionContext {
     clerkUserId?: string;
   };
   request?: {
-    id?: string;
+    id?: string;         // assistant_requests.id
+    runId?: string;      // assistant_runs.id — the FK pending_tasks.run_id expects
     source?: "api" | "voice" | "local-stt" | "web";
   };
   executionState: {
