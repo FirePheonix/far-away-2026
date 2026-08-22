@@ -281,3 +281,69 @@ pub fn open_in_browser(url: &str) {
             .spawn();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Obsidian bridge: poll for pending requests, submit results
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObsidianRequest {
+    pub id: String,
+    pub action: String,
+    pub params: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ObsidianPendingResponse {
+    #[serde(default)]
+    requests: Vec<ObsidianRequest>,
+}
+
+/// Poll the backend for pending Obsidian requests that need local execution.
+pub fn fetch_obsidian_requests(
+    backend_url: &str,
+    token: Option<&str>,
+) -> Result<Vec<ObsidianRequest>> {
+    let (status, body) = request(
+        reqwest::Method::GET,
+        backend_url,
+        token,
+        "/api/obsidian/pending",
+        None,
+    )?;
+    if !status.is_success() {
+        anyhow::bail!("Obsidian pending poll failed ({status})");
+    }
+    let parsed: ObsidianPendingResponse =
+        serde_json::from_str(&body).unwrap_or(ObsidianPendingResponse {
+            requests: Vec::new(),
+        });
+    Ok(parsed.requests)
+}
+
+/// Post the result of a local Obsidian operation back to the backend.
+pub fn submit_obsidian_result(
+    backend_url: &str,
+    token: Option<&str>,
+    request_id: &str,
+    result: Result<Value>,
+) -> Result<()> {
+    let body = match result {
+        Ok(val) => serde_json::json!({ "result": val }),
+        Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
+    };
+    let path = format!("/api/obsidian/{request_id}/result");
+    let (status, _) = request(
+        reqwest::Method::POST,
+        backend_url,
+        token,
+        &path,
+        Some(body),
+    )?;
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Obsidian result submit failed ({status})"))
+    }
+}
+

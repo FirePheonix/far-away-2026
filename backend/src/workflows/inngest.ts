@@ -39,4 +39,11 @@ export const ASSISTANT_EVENTS = {
    * data: { runId, requestId, reason: string }
    */
   runAbandoned: "assistant/run_abandoned",
+
+  /**
+   * Fired by POST /api/obsidian/:requestId/result — the desktop app finished
+   * a local Obsidian file operation and sent the result back.
+   * data: { obsidianRequestId, requestId, result }
+   */
+  obsidianResultReceived: "assistant/obsidian_result_received",
 } as const;

@@ -11,6 +11,7 @@ mod audio;
 mod config;
 mod hotkey;
 mod model;
+mod obsidian;
 mod overlay;
 mod tray;
 mod util;

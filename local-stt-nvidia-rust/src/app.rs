@@ -43,6 +43,8 @@ enum WorkerMsg {
     PairingReady { pairing_id: String, code: String, claim_url: String },
     PairingFailed { message: String },
     PairingClaimed { token: String },
+    ObsidianRequests { requests: Vec<api::ObsidianRequest> },
+    ObsidianDone { request_id: String, ok: bool, message: String },
 }
 
 /// One dictation: chunks decoded live, assembled in order on stop.
@@ -133,6 +135,7 @@ pub struct LocalSttApp {
     last_pair_poll: Instant,
     pairing_started: Option<Instant>,
     last_opened_claim_url: Option<String>,
+    last_obsidian_poll: Instant,
 }
 
 impl LocalSttApp {
@@ -178,6 +181,7 @@ impl LocalSttApp {
             last_pair_poll: Instant::now(),
             pairing_started: None,
             last_opened_claim_url: None,
+            last_obsidian_poll: Instant::now(),
         })
     }
 
@@ -537,6 +541,16 @@ impl LocalSttApp {
                     }
                     self.update_tray_ready_label();
                 }
+                WorkerMsg::ObsidianRequests { requests } => {
+                    self.dispatch_obsidian_requests(requests);
+                }
+                WorkerMsg::ObsidianDone { request_id, ok, message } => {
+                    if ok {
+                        log::info!("[obsidian] request {request_id} completed: {message}");
+                    } else {
+                        log::warn!("[obsidian] request {request_id} failed: {message}");
+                    }
+                }
             }
         }
     }
@@ -622,6 +636,7 @@ impl eframe::App for LocalSttApp {
             TrayAction::None => {}
         }
         self.poll_pairing();
+        self.poll_obsidian();
 
         if self.recording {
             self.overlay.rms = self.recorder.rms();
@@ -829,5 +844,129 @@ impl LocalSttApp {
                 ctx.request_repaint();
             }
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // Obsidian bridge polling
+    // -----------------------------------------------------------------------
+
+    fn poll_obsidian(&mut self) {
+        if self.last_obsidian_poll.elapsed().as_secs() < 2 {
+            return;
+        }
+        self.last_obsidian_poll = Instant::now();
+
+        let cfg = config::load();
+        let token = cfg.desktop_token.clone();
+        if token.as_ref().map(|t| t.trim().is_empty()).unwrap_or(true) {
+            return; // not paired yet
+        }
+
+        let backend_url = cfg.backend_url.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        thread::spawn(move || {
+            match api::fetch_obsidian_requests(&backend_url, token.as_deref()) {
+                Ok(requests) if !requests.is_empty() => {
+                    let _ = tx.send(WorkerMsg::ObsidianRequests { requests });
+                }
+                Ok(_) => {} // no pending requests
+                Err(e) => {
+                    log::debug!("[obsidian] poll error: {e}");
+                }
+            }
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn dispatch_obsidian_requests(&self, requests: Vec<api::ObsidianRequest>) {
+        for req in requests {
+            let cfg = config::load();
+            let backend_url = cfg.backend_url.clone();
+            let token = cfg.desktop_token.clone();
+            let tx = self.worker_tx.clone();
+            let wake = self.ui_wake.clone();
+
+            thread::spawn(move || {
+                let vault_name = req.params.get("vaultName")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let result = execute_obsidian_request(&req, vault_name.as_deref());
+
+                let (ok, message) = match &result {
+                    Ok(val) => (true, val.to_string()),
+                    Err(e) => (false, format!("{e:#}")),
+                };
+
+                let submit_result = result.map(|v| v).map_err(|e| anyhow::anyhow!("{e:#}"));
+
+                if let Err(e) = api::submit_obsidian_result(
+                    &backend_url,
+                    token.as_deref(),
+                    &req.id,
+                    submit_result,
+                ) {
+                    log::warn!("[obsidian] failed to submit result for {}: {e}", req.id);
+                }
+
+                let _ = tx.send(WorkerMsg::ObsidianDone {
+                    request_id: req.id,
+                    ok,
+                    message,
+                });
+                if let Some(ctx) = wake.lock().as_ref() {
+                    ctx.request_repaint();
+                }
+            });
+        }
+    }
+}
+
+/// Execute a single Obsidian request locally.
+fn execute_obsidian_request(
+    req: &api::ObsidianRequest,
+    vault_name: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    use crate::obsidian;
+
+    let vault_path = obsidian::resolve_vault(vault_name)?;
+
+    match req.action.as_str() {
+        "search_notes" => {
+            let query = req.params.get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let max_results = req.params.get("maxResults")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10) as usize;
+
+            let results = obsidian::search_notes(&vault_path, query, max_results)?;
+            Ok(serde_json::to_value(results)?)
+        }
+        "append_to_note" => {
+            let note_path = req.params.get("notePath")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing notePath parameter"))?;
+            let content = req.params.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let msg = obsidian::append_to_note(&vault_path, note_path, content)?;
+            Ok(serde_json::json!({ "message": msg }))
+        }
+        "write_daily_note" => {
+            let content = req.params.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let msg = obsidian::write_daily_note(&vault_path, content, None)?;
+            Ok(serde_json::json!({ "message": msg }))
+        }
+        other => {
+            anyhow::bail!("Unknown Obsidian action: {other}");
+        }
     }
 }

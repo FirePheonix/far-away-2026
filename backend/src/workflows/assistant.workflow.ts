@@ -157,6 +157,37 @@ export const assistantWorkflow = inngest.createFunction(
           }
         }
 
+        // -----------------------------------------------------------------------
+        // waitForEvent — Obsidian tools (local file I/O via desktop app)
+        //
+        // When an obsidian.* tool runs it inserts a row into obsidian_requests
+        // and returns { obsidianRequestId }. The desktop app polls for pending
+        // requests, executes the file operation locally, and POSTs the result
+        // back. That POST fires obsidianResultReceived which we wait for here.
+        // -----------------------------------------------------------------------
+        if (
+          action.tool.startsWith("obsidian.") &&
+          !stepOutput?.error &&
+          stepOutput?.obsidianRequestId
+        ) {
+          const obsidianRequestId = stepOutput.obsidianRequestId as string;
+
+          const obsidianEvent = await step.waitForEvent(`wait-for-obsidian-${i}`, {
+            event: ASSISTANT_EVENTS.obsidianResultReceived,
+            timeout: "5m",
+            if: `async event.data.obsidianRequestId == "${obsidianRequestId}"`,
+          });
+
+          if (obsidianEvent) {
+            // Merge the desktop app's result into the step output so subsequent
+            // steps can reference it (e.g. search results for append_to_note).
+            stepOutput.obsidianResult = obsidianEvent.data.result;
+          } else {
+            stepOutput.error =
+              "Obsidian request timed out — make sure the Clawvio desktop app is running.";
+          }
+        }
+
         stepsExecuted.push(stepResult);
       }
 
