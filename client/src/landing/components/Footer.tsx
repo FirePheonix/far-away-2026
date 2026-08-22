@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import Image from "next/image";
 import assets from "../data/assets.json";
 
 const Footer = () => {
@@ -48,10 +49,11 @@ const Footer = () => {
           </div>
 
           <div className="w-48 h-48 md:w-64 md:h-64 relative">
-            <img
+            <Image
               src="/footer-logo-image.jpg"
               alt="Clawvio Flower"
-              className="w-full h-full object-cover mix-blend-multiply opacity-80"
+              fill
+              className="object-cover mix-blend-multiply opacity-80"
             />
           </div>
         </div>

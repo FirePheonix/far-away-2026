@@ -33,20 +33,30 @@ const ContactSection = () => {
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <label className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2">
+                <label
+                  htmlFor="name"
+                  className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2"
+                >
                   Name*
                 </label>
                 <input
+                  id="name"
+                  name="name"
                   required
                   type="text"
                   className="w-full bg-[#E5E2DC] border-0 rounded-xl px-4 py-3 text-brand-dark focus:ring-1 focus:ring-brand-dark/20 outline-none transition-all"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2">
+                <label
+                  htmlFor="email"
+                  className="text-xs font-medium text-brand-dark uppercase tracking-wide ml-2"
+                >
                   Email*
                 </label>
                 <input
+                  id="email"
+                  name="email"
                   required
                   type="email"
                   className="w-full bg-[#E5E2DC] border-0 rounded-xl px-4 py-3 text-brand-dark focus:ring-1 focus:ring-brand-dark/20 outline-none transition-all"
@@ -68,7 +78,13 @@ const ContactSection = () => {
                   "All of the above",
                 ].map((opt, i) => (
                   <label key={i} className="cursor-pointer">
-                    <input type="checkbox" className="peer sr-only" />
+                    <input
+                      type="checkbox"
+                      name="enable_first"
+                      value={opt}
+                      aria-label={opt}
+                      className="peer sr-only"
+                    />
                     <span className="block text-xs font-medium px-4 py-2 rounded-full border border-brand-dark/10 text-brand-text/60 peer-checked:bg-brand-dark peer-checked:text-white transition-all hover:bg-white">
                       {opt}
                     </span>
@@ -92,6 +108,8 @@ const ContactSection = () => {
                     <input
                       type="radio"
                       name="challenge"
+                      value={opt}
+                      aria-label={opt}
                       className="peer sr-only"
                     />
                     <span className="block text-xs font-medium px-4 py-2 rounded-full border border-brand-dark/10 text-brand-text/60 peer-checked:bg-brand-dark peer-checked:text-white transition-all hover:bg-white">
@@ -104,7 +122,9 @@ const ContactSection = () => {
 
             <div className="space-y-2">
               <textarea
+                aria-label="Share your workflow and tools"
                 placeholder="Share your workflow and tools..."
+                name="workflow"
                 rows={4}
                 className="w-full bg-[#E5E2DC] border-0 rounded-xl px-4 py-3 text-brand-dark focus:ring-1 focus:ring-brand-dark/20 outline-none transition-all resize-none placeholder:text-brand-text/40"
               ></textarea>

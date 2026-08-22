@@ -1,5 +1,6 @@
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import { motion } from "framer-motion";
+import Image from "next/image";
 import assets from "../data/assets.json";
 
 const Hero = () => {
@@ -59,10 +60,11 @@ const Hero = () => {
         className="w-full relative rounded-[2.5rem] overflow-hidden min-h-[500px] md:min-h-[600px] flex items-center justify-center p-6 md:p-12"
       >
         <div className="absolute inset-0 z-0">
-          <img
+          <Image
             src="/hero-bg-artwork.svg"
             alt="Abstract Background"
-            className="w-full h-full object-cover"
+            fill
+            className="object-cover"
           />
           <div className="absolute inset-0 bg-black/10" />
         </div>

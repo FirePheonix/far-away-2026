@@ -1,5 +1,6 @@
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import FadeIn from "./FadeIn";
+import Image from "next/image";
 import assets from "../data/assets.json";
 
 const CaseStudySection = () => {
@@ -13,8 +14,10 @@ const CaseStudySection = () => {
             </span>
             <h2 className="text-4xl md:text-5xl font-serif text-brand-dark mb-6">
               Turn daily operations into <br />
-              compounding {" "}
-              <span className="italic text-brand-text/50">institutional memory.</span>
+              compounding{" "}
+              <span className="italic text-brand-text/50">
+                institutional memory.
+              </span>
             </h2>
             <p className="text-brand-text mb-8 text-sm leading-relaxed">
               Clawvio captures what was requested, what was executed, and what
@@ -22,7 +25,8 @@ const CaseStudySection = () => {
               <br />
               <br />
               That means decisions are no longer buried in chat threads or
-              meetings. They stay searchable, reusable, and connected to outcomes.
+              meetings. They stay searchable, reusable, and connected to
+              outcomes.
               <br />
               <br />
               The more your team uses Clawvio, the smarter your operating memory
@@ -61,16 +65,20 @@ const CaseStudySection = () => {
             delay={0.2}
             className="relative aspect-[4/5] md:aspect-square lg:aspect-[4/5] rounded-[2.5rem] overflow-hidden"
           >
-            <img
+            <Image
+              width={1000}
+              height={100}
               src="/clawvio-memory.svg"
               alt="Knowledge Graph View"
               className="absolute inset-0 h-6/8 object-cover top-1/2 -translate-y-1/2"
             />
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <img
+              <Image
                 src="/logo-light.png"
                 alt="Clawvio Logo"
-                className="w-115 translate-y-4 object-contain"
+                width={400}
+                height={400}
+                className="translate-y-4 object-contain"
               />
             </div>
           </FadeIn>

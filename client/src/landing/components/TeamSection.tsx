@@ -1,5 +1,6 @@
 /* eslint-disable react/no-unescaped-entities, @typescript-eslint/no-explicit-any, @next/next/no-img-element */
 import FadeIn from "./FadeIn";
+import Image from "next/image";
 import assets from "../data/assets.json";
 
 const team = [
@@ -53,10 +54,11 @@ const TeamSection = () => {
             delay={idx * 0.1}
             className="group relative aspect-[3/4] rounded-2xl overflow-hidden"
           >
-            <img
+            <Image
               src={member.image}
               alt={member.name}
-              className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 scale-110 group-hover:scale-125"
+              fill
+              className="object-cover transition-transform duration-700 scale-110 group-hover:scale-125"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
 

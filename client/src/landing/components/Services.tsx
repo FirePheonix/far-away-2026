@@ -3,6 +3,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import assets from "../data/assets.json";
 
 const services = [
@@ -101,10 +102,11 @@ const Services = () => {
               className="absolute inset-0 flex flex-col"
             >
               <div className="w-full flex-1 min-h-0 rounded-[2rem] overflow-hidden mb-8 relative flex items-center">
-                <img
+                <Image
                   src={services[activeService].image}
                   alt={services[activeService].title}
-                  className="w-full h-full object-contain"
+                  fill
+                  className="object-contain"
                 />
               </div>
 

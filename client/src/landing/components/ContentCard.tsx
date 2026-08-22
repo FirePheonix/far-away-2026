@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import Image from "next/image";
 import FadeIn from "./FadeIn";
 
 interface ContentCardProps {
@@ -30,10 +31,11 @@ const ContentCard: React.FC<ContentCardProps> = ({
       {/* Image Card */}
       <Link href={`${basePath}/${id}`} className="block w-full">
         <div className="relative w-full aspect-[16/10] rounded-[2rem] overflow-hidden bg-gray-100">
-          <img
+          <Image
             src={image}
             alt={title}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+            fill
+            className="object-cover transition-transform duration-700 group-hover:scale-105"
           />
 
           {/* Overlay for Logo (Case Studies) */}
