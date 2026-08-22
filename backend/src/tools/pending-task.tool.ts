@@ -28,7 +28,8 @@ export const pendingTaskTool: AnyToolDefinition = {
     const { error } = await supabaseAdmin.from("pending_tasks").insert({
       id: taskId,
       clerk_user_id: context.user.clerkUserId,
-      run_id: context.request?.id ?? null,
+      // run_id is a FK to assistant_runs.id — use runId, NOT requestId
+      run_id: context.request?.runId ?? null,
       kind: "user_input",
       step_index: context.executionState.currentStep,
       description: params.description,

@@ -5,6 +5,7 @@ export function createExecutionContext(
   options: {
     clerkUserId?: string;
     requestId?: string;
+    runId?: string;
     source?: "api" | "voice" | "local-stt" | "web";
   } = {},
 ): ExecutionContext {
@@ -16,6 +17,7 @@ export function createExecutionContext(
     },
     request: {
       id: options.requestId,
+      runId: options.runId,
       source: options.source,
     },
     executionState: {
