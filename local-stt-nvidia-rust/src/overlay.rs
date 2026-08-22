@@ -5,7 +5,7 @@
 //! from the top bezel: concave flares at the top corners, stadium rounding
 //! along the bottom.
 
-use crate::api::PendingTask;
+use crate::api::{PendingTask, ReasonChip, Trace};
 use egui::{self, Color32, CornerRadius, Pos2, Rect, RichText, Sense, Shape, Stroke, Vec2};
 
 /// Collapsed notch height (logical px), not counting the top-edge flares.
@@ -16,6 +16,14 @@ pub const PILL_W_IDLE: f32 = 420.0;
 pub const PILL_H_RESULT_EXTRA: f32 = 200.0;
 /// Extra height for the human-feedback task panel.
 pub const PILL_H_FEEDBACK_EXTRA: f32 = 250.0;
+/// Extra height for the live agent-flow step list.
+pub const PILL_H_FLOW_EXTRA: f32 = 300.0;
+/// Extra height for the yes/no confirmation.
+pub const PILL_H_CONFIRM_EXTRA: f32 = 130.0;
+/// Extra height for reason chips plus the note field.
+pub const PILL_H_REASON_EXTRA: f32 = 250.0;
+/// Extra height for the unresolved / handback list.
+pub const PILL_H_UNRESOLVED_EXTRA: f32 = 320.0;
 /// Window height when a result is visible.
 pub const PILL_H_RESULT: f32 = PILL_H + PILL_H_RESULT_EXTRA;
 /// Window height when a pending task needs a decision.
@@ -37,6 +45,40 @@ const GREEN: Color32 = Color32::from_rgb(0x7D, 0xA8, 0x88);
 pub enum RecordMode {
     Ocr,
     Command,
+    /// Dictating the free-text half of a closure reason.
+    ReasonNote,
+}
+
+/// What a confirmation or reason prompt will do once the user commits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingClosure {
+    SkipTask { task_id: String },
+    AbandonTask { task_id: String },
+    /// Answering a step_failure handback with "skip" or "abandon".
+    DecideStep { task_id: String, decision: String },
+    StopRun { run_id: String, request_id: String },
+}
+
+impl PendingClosure {
+    fn verb(&self) -> &'static str {
+        match self {
+            PendingClosure::SkipTask { .. } => "Skip this step",
+            PendingClosure::AbandonTask { .. } => "Abandon this task",
+            PendingClosure::DecideStep { decision, .. } => {
+                if decision == "skip" {
+                    "Skip this step"
+                } else {
+                    "Abandon this run"
+                }
+            }
+            PendingClosure::StopRun { .. } => "Stop this run",
+        }
+    }
+
+    /// Destructive closures get a yes/no gate before the reason prompt.
+    fn needs_confirm(&self) -> bool {
+        !matches!(self, PendingClosure::SkipTask { .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +96,32 @@ pub enum OverlayState {
         busy: bool,
         status: String,
     },
+    /// Live agent flow: the plan, per-step status, and the failure hand-back.
+    Flow {
+        trace: Trace,
+        busy: bool,
+        status: String,
+    },
+    Confirm {
+        prompt: String,
+        detail: String,
+        pending: PendingClosure,
+        previous: Box<OverlayState>,
+    },
+    ReasonPrompt {
+        title: String,
+        pending: PendingClosure,
+        chips: Vec<ReasonChip>,
+        selected: usize,
+        note: String,
+        dictating: bool,
+        previous: Box<OverlayState>,
+    },
+    /// Handback inbox — what is still owed back to the user.
+    Unresolved {
+        data: crate::api::Unresolved,
+        status: String,
+    },
     Pairing { code: String, claim_url: String },
 }
 
@@ -61,10 +129,44 @@ pub enum OverlayState {
 pub enum OverlayAction {
     #[default]
     None,
-    Skip { task_id: String },
-    Abandon { task_id: String },
-    Change { task_id: String, instruction: String },
+    Skip {
+        task_id: String,
+        reason_code: String,
+        note: Option<String>,
+    },
+    Abandon {
+        task_id: String,
+        reason_code: String,
+        note: Option<String>,
+    },
+    Decide {
+        task_id: String,
+        decision: String,
+        reason_code: String,
+        note: Option<String>,
+    },
+    StopRun {
+        run_id: String,
+        request_id: String,
+        reason_code: String,
+        note: Option<String>,
+    },
+    Pause {
+        task_id: String,
+        minutes: i64,
+    },
+    Change {
+        task_id: String,
+        instruction: String,
+    },
+    /// Open the dashboard so the user can reconnect a revoked integration.
+    Reconnect,
+    /// Jump from the Unresolved inbox onto a still-open task.
+    OpenTask { task: PendingTask },
     OpenPairUrl { url: String },
+    ShowUnresolved,
+    /// Start recording so the user can speak the reason note.
+    Dictate,
 }
 
 pub struct Overlay {
@@ -73,6 +175,8 @@ pub struct Overlay {
     pub alpha: f32,
     pub screen_w: f32,
     pub max_scroll_h: f32,
+    /// Reason vocabulary from the backend, with a usable local fallback.
+    pub reason_chips: Vec<ReasonChip>,
     dismiss_at: Option<f64>,
     phase: f32,
 }
@@ -85,10 +189,30 @@ impl Default for Overlay {
             alpha: 0.0,
             screen_w: 1920.0,
             max_scroll_h: 160.0,
+            reason_chips: default_reason_chips(),
             dismiss_at: None,
             phase: 0.0,
         }
     }
+}
+
+/// Used until /closure-reasons responds, and if it never does. The codes match
+/// the server's vocabulary so a closure recorded offline still classifies.
+fn default_reason_chips() -> Vec<ReasonChip> {
+    [
+        ("wrong_intent", "Not what I asked"),
+        ("ai_got_it_wrong", "Got it wrong"),
+        ("no_longer_needed", "Don't need it"),
+        ("doing_it_manually", "I'll do it"),
+        ("missing_info", "Missing info"),
+        ("deferred", "Later"),
+    ]
+    .iter()
+    .map(|(code, label)| ReasonChip {
+        code: (*code).to_string(),
+        label: (*label).to_string(),
+    })
+    .collect()
 }
 
 impl Overlay {
@@ -142,31 +266,161 @@ impl Overlay {
         self.dismiss_at = None;
     }
     pub fn set_feedback_busy(&mut self, busy: bool, status: impl Into<String>) {
-        if let OverlayState::Feedback {
-            busy: b, status: s, ..
-        } = &mut self.state
-        {
-            *b = busy;
-            *s = status.into();
+        let status = status.into();
+        match &mut self.state {
+            OverlayState::Feedback {
+                busy: b, status: s, ..
+            }
+            | OverlayState::Flow {
+                busy: b, status: s, ..
+            } => {
+                *b = busy;
+                *s = status;
+            }
+            OverlayState::Unresolved { status: s, .. } => *s = status,
+            _ => {}
+        }
+    }
+
+    /// Shows the live flow for a run. Keeps the existing panel in place when a
+    /// poll returns the same request so the overlay doesn't flicker.
+    pub fn show_flow(&mut self, trace: Trace) {
+        let (busy, status) = match &self.state {
+            OverlayState::Flow { busy, status, .. } => (*busy, status.clone()),
+            _ => (false, String::new()),
+        };
+        self.state = OverlayState::Flow {
+            trace,
+            busy,
+            status,
+        };
+        self.dismiss_at = None;
+    }
+
+    pub fn show_unresolved(&mut self, data: crate::api::Unresolved) {
+        self.state = OverlayState::Unresolved {
+            data,
+            status: String::new(),
+        };
+        self.dismiss_at = None;
+    }
+
+    pub fn is_flow(&self) -> bool {
+        matches!(self.state, OverlayState::Flow { .. })
+    }
+
+    /// True while a closure is being collected, so task polling shouldn't
+    /// replace the panel under the user's hands.
+    pub fn is_collecting_closure(&self) -> bool {
+        matches!(
+            self.state,
+            OverlayState::Confirm { .. } | OverlayState::ReasonPrompt { .. }
+        )
+    }
+
+    /// Enters the confirm-then-reason flow for a closure.
+    pub fn begin_closure(
+        &mut self,
+        pending: PendingClosure,
+        detail: impl Into<String>,
+        chips: Vec<ReasonChip>,
+    ) {
+        let previous = Box::new(self.state.clone());
+        if pending.needs_confirm() {
+            self.state = OverlayState::Confirm {
+                prompt: format!("{}?", pending.verb()),
+                detail: detail.into(),
+                pending,
+                previous,
+            };
+        } else {
+            self.state = OverlayState::ReasonPrompt {
+                title: pending.verb().to_string(),
+                pending,
+                chips,
+                selected: 0,
+                note: String::new(),
+                dictating: false,
+                previous,
+            };
+        }
+        self.dismiss_at = None;
+    }
+
+    /// Called when the user's spoken note has been transcribed.
+    pub fn append_reason_note(&mut self, text: &str) {
+        if let OverlayState::ReasonPrompt { note, dictating, .. } = &mut self.state {
+            if !note.is_empty() && !note.ends_with(' ') {
+                note.push(' ');
+            }
+            note.push_str(text.trim());
+            *dictating = false;
+        }
+    }
+
+    pub fn set_dictating(&mut self, on: bool) {
+        if let OverlayState::ReasonPrompt { dictating, .. } = &mut self.state {
+            *dictating = on;
+        }
+    }
+
+    pub fn is_reason_prompt(&self) -> bool {
+        matches!(self.state, OverlayState::ReasonPrompt { .. })
+    }
+    pub fn is_confirm(&self) -> bool {
+        matches!(self.state, OverlayState::Confirm { .. })
+    }
+
+    /// Spoken yes/no while a confirmation is on screen. Returns true if the
+    /// utterance was recognised as an answer.
+    pub fn apply_spoken_confirm(&mut self, text: &str) -> bool {
+        let lowered = text.to_lowercase();
+        let yes = ["yes", "yeah", "yep", "yup", "ok", "okay", "confirm", "sure"]
+            .iter()
+            .any(|w| lowered.split_whitespace().any(|t| t.trim_matches(|c: char| !c.is_alphabetic()) == *w));
+        let no = ["no", "nope", "nah", "cancel", "stop"]
+            .iter()
+            .any(|w| lowered.split_whitespace().any(|t| t.trim_matches(|c: char| !c.is_alphabetic()) == *w));
+        if yes {
+            self.advance_confirm();
+            true
+        } else if no {
+            self.cancel_closure();
+            true
+        } else {
+            false
         }
     }
     pub fn dismiss(&mut self) {
         self.state = OverlayState::Hidden;
         self.dismiss_at = None;
     }
+    /// Auto-hide after a delay. Used once a run reaches a terminal state.
+    pub fn arm_dismiss(&mut self, now: f64, secs: f64) {
+        self.dismiss_at = Some(now + secs);
+    }
     pub fn is_visible(&self) -> bool {
         !matches!(self.state, OverlayState::Hidden) || self.alpha > 0.01
     }
     pub fn desired_height(&self) -> f32 {
-        match self.state {
+        match &self.state {
             OverlayState::Result { .. } | OverlayState::Pairing { .. } => PILL_H_RESULT,
             OverlayState::Feedback { changing, .. } => {
-                if changing {
+                if *changing {
                     PILL_H_FEEDBACK + 40.0
                 } else {
                     PILL_H_FEEDBACK
                 }
             }
+            OverlayState::Flow { trace, .. } => {
+                // Grow with the plan, but stop before it becomes a wall.
+                let rows = trace.steps.len().clamp(1, 6) as f32;
+                let handback = if trace.tasks.is_empty() { 0.0 } else { 56.0 };
+                PILL_H + 96.0 + rows * 26.0 + handback
+            }
+            OverlayState::Confirm { .. } => PILL_H + PILL_H_CONFIRM_EXTRA,
+            OverlayState::ReasonPrompt { .. } => PILL_H + PILL_H_REASON_EXTRA,
+            OverlayState::Unresolved { .. } => PILL_H + PILL_H_UNRESOLVED_EXTRA,
             _ => PILL_H,
         }
     }
@@ -199,7 +453,12 @@ impl Overlay {
         let mut should_dismiss = false;
         let sticky = matches!(
             self.state,
-            OverlayState::Feedback { .. } | OverlayState::Pairing { .. }
+            OverlayState::Feedback { .. }
+                | OverlayState::Pairing { .. }
+                | OverlayState::Flow { .. }
+                | OverlayState::Confirm { .. }
+                | OverlayState::ReasonPrompt { .. }
+                | OverlayState::Unresolved { .. }
         );
         // Center in the real window, not a guessed monitor width.
         let canvas = ui.max_rect();
@@ -210,6 +469,10 @@ impl Overlay {
             OverlayState::Result { .. }
                 | OverlayState::Feedback { .. }
                 | OverlayState::Pairing { .. }
+                | OverlayState::Flow { .. }
+                | OverlayState::Confirm { .. }
+                | OverlayState::ReasonPrompt { .. }
+                | OverlayState::Unresolved { .. }
         );
         let pill_w = if expanded {
             (sw * 0.48).max(PILL_W_IDLE).min(sw - 48.0)
@@ -314,6 +577,18 @@ impl Overlay {
         if matches!(self.state, OverlayState::Feedback { .. }) {
             action = self.draw_feedback_body(ui, pill_rect, pill_w, pill_h);
         }
+        if matches!(self.state, OverlayState::Flow { .. }) {
+            action = self.draw_flow_body(ui, pill_rect, pill_w, pill_h);
+        }
+        if matches!(self.state, OverlayState::Confirm { .. }) {
+            action = self.draw_confirm_body(ui, pill_rect, pill_w, pill_h);
+        }
+        if matches!(self.state, OverlayState::ReasonPrompt { .. }) {
+            action = self.draw_reason_body(ui, pill_rect, pill_w, pill_h);
+        }
+        if matches!(self.state, OverlayState::Unresolved { .. }) {
+            action = self.draw_unresolved_body(ui, pill_rect, pill_w, pill_h);
+        }
         if matches!(self.state, OverlayState::Pairing { .. }) {
             if let OverlayAction::OpenPairUrl { url } = self.draw_pairing_body(ui, pill_rect, pill_w, pill_h)
             {
@@ -321,20 +596,187 @@ impl Overlay {
             }
         }
 
+        if let Some(keyed) = self.handle_keys(ctx) {
+            action = keyed;
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if let OverlayState::Feedback { changing, .. } = &mut self.state {
-                if *changing {
-                    *changing = false;
-                } else {
-                    should_dismiss = true;
+            match &mut self.state {
+                OverlayState::Feedback { changing, .. } => {
+                    if *changing {
+                        *changing = false;
+                    } else {
+                        should_dismiss = true;
+                    }
                 }
-            } else {
-                should_dismiss = true;
+                // Backing out of a closure returns to whatever was on screen,
+                // so an accidental keypress can't lose the run view.
+                OverlayState::Confirm { previous, .. }
+                | OverlayState::ReasonPrompt { previous, .. } => {
+                    self.state = (**previous).clone();
+                }
+                _ => should_dismiss = true,
             }
         }
         if should_dismiss {
             self.dismiss();
         }
+        action
+    }
+
+    /// Keyboard shortcuts: Y/N on a confirmation, 1-6 to pick a reason chip,
+    /// Enter to commit. Voice-first product, but the hands should still work.
+    fn handle_keys(&mut self, ctx: &egui::Context) -> Option<OverlayAction> {
+        let (yes, no, enter, digits) = ctx.input(|i| {
+            let digits = [
+                egui::Key::Num1,
+                egui::Key::Num2,
+                egui::Key::Num3,
+                egui::Key::Num4,
+                egui::Key::Num5,
+                egui::Key::Num6,
+            ]
+            .iter()
+            .position(|k| i.key_pressed(*k));
+            (
+                i.key_pressed(egui::Key::Y),
+                i.key_pressed(egui::Key::N),
+                i.key_pressed(egui::Key::Enter),
+                digits,
+            )
+        });
+
+        enum Intent {
+            Confirm,
+            Cancel,
+            Pick(usize),
+            Commit,
+        }
+
+        let intent = match &self.state {
+            OverlayState::Confirm { .. } => {
+                if yes || enter {
+                    Some(Intent::Confirm)
+                } else if no {
+                    Some(Intent::Cancel)
+                } else {
+                    None
+                }
+            }
+            OverlayState::ReasonPrompt { chips, .. } => {
+                if enter {
+                    Some(Intent::Commit)
+                } else {
+                    digits.filter(|d| *d < chips.len()).map(Intent::Pick)
+                }
+            }
+            _ => None,
+        };
+
+        match intent {
+            Some(Intent::Confirm) => {
+                self.advance_confirm();
+                None
+            }
+            Some(Intent::Cancel) => {
+                self.cancel_closure();
+                None
+            }
+            Some(Intent::Pick(d)) => {
+                if let OverlayState::ReasonPrompt { selected, .. } = &mut self.state {
+                    *selected = d;
+                }
+                None
+            }
+            Some(Intent::Commit) => Some(self.commit_reason()),
+            None => None,
+        }
+    }
+
+    /// Confirmed — move on to collecting the reason.
+    fn advance_confirm(&mut self) {
+        let (pending, previous) = match &self.state {
+            OverlayState::Confirm {
+                pending, previous, ..
+            } => (pending.clone(), previous.clone()),
+            _ => return,
+        };
+        self.state = OverlayState::ReasonPrompt {
+            title: pending.verb().to_string(),
+            pending,
+            chips: self.reason_chips.clone(),
+            selected: 0,
+            note: String::new(),
+            dictating: false,
+            previous,
+        };
+    }
+
+    fn cancel_closure(&mut self) {
+        let previous = match &self.state {
+            OverlayState::Confirm { previous, .. }
+            | OverlayState::ReasonPrompt { previous, .. } => Some((**previous).clone()),
+            _ => None,
+        };
+        if let Some(prev) = previous {
+            self.state = prev;
+        }
+    }
+
+    /// Turns the selected chip plus the (possibly spoken) note into an action.
+    fn commit_reason(&mut self) -> OverlayAction {
+        let (pending, reason_code, note, previous) = match &self.state {
+            OverlayState::ReasonPrompt {
+                pending,
+                chips,
+                selected,
+                note,
+                previous,
+                ..
+            } => (
+                pending.clone(),
+                chips
+                    .get(*selected)
+                    .map(|c| c.code.clone())
+                    .unwrap_or_else(|| "unspecified".to_string()),
+                if note.trim().is_empty() {
+                    None
+                } else {
+                    Some(note.trim().to_string())
+                },
+                previous.clone(),
+            ),
+            _ => return OverlayAction::None,
+        };
+
+        let action = match pending {
+            PendingClosure::SkipTask { task_id } => OverlayAction::Skip {
+                task_id,
+                reason_code,
+                note,
+            },
+            PendingClosure::AbandonTask { task_id } => OverlayAction::Abandon {
+                task_id,
+                reason_code,
+                note,
+            },
+            PendingClosure::DecideStep { task_id, decision } => OverlayAction::Decide {
+                task_id,
+                decision,
+                reason_code,
+                note,
+            },
+            PendingClosure::StopRun { run_id, request_id } => OverlayAction::StopRun {
+                run_id,
+                request_id,
+                reason_code,
+                note,
+            },
+        };
+
+        // Go back to the run view; the app will show progress there.
+        self.state = *previous;
+        self.set_feedback_busy(true, "Recording your reason…");
         action
     }
 
@@ -427,18 +869,38 @@ impl Overlay {
             });
         } else {
             child.horizontal(|ui| {
+                // reason_code is left empty on purpose: the app routes these
+                // through the confirm/reason prompt before anything closes.
                 if ui.add(action_btn("Abandon", RED, !is_busy)).clicked() {
                     action = OverlayAction::Abandon {
                         task_id: task.id.clone(),
+                        reason_code: String::new(),
+                        note: None,
                     };
                 }
                 if ui.add(action_btn("Skip", MUTED, !is_busy)).clicked() {
                     action = OverlayAction::Skip {
                         task_id: task.id.clone(),
+                        reason_code: String::new(),
+                        note: None,
                     };
                 }
                 if ui.add(action_btn("Change", ACCENT, !is_busy)).clicked() {
                     *changing = true;
+                }
+            });
+            child.add_space(6.0);
+            // Snooze. Capped server-side so a paused task always resumes into
+            // the same run rather than being lost.
+            child.horizontal(|ui| {
+                ui.label(RichText::new("Later:").size(10.5).color(MUTED));
+                for (label, minutes) in [("15m", 15_i64), ("1h", 60), ("3h", 180), ("Tonight", 480)] {
+                    if ui.add(chip_btn(label, MUTED, false)).clicked() {
+                        action = OverlayAction::Pause {
+                            task_id: task.id.clone(),
+                            minutes,
+                        };
+                    }
                 }
             });
         }
@@ -446,6 +908,397 @@ impl Overlay {
         if !status.is_empty() {
             child.add_space(6.0);
             child.label(RichText::new(status.as_str()).size(11.0).color(MUTED));
+        }
+        action
+    }
+
+    /// Carves the area under the notch chrome that a panel draws into.
+    fn body_ui(
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+        min_h: f32,
+    ) -> egui::Ui {
+        let body = Rect::from_min_size(
+            Pos2::new(pill_rect.min.x + 18.0, pill_rect.min.y + PILL_H - 4.0),
+            Vec2::new(pill_w - 36.0, (pill_h - PILL_H - 10.0).max(min_h)),
+        );
+        ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(body)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        )
+    }
+
+    /// The live agent flow: what the assistant planned, where it is now, and
+    /// the exact reason a step failed.
+    fn draw_flow_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let OverlayState::Flow {
+            trace,
+            busy,
+            status,
+        } = &self.state
+        else {
+            return OverlayAction::None;
+        };
+        let trace = trace.clone();
+        let is_busy = *busy;
+        let status = status.clone();
+        let mut action = OverlayAction::None;
+
+        let mut child = Self::body_ui(ui, pill_rect, pill_w, pill_h, 80.0);
+
+        let done = trace
+            .steps
+            .iter()
+            .filter(|s| s.status == "succeeded")
+            .count();
+        let header = if trace.steps.is_empty() {
+            "Planning…".to_string()
+        } else {
+            format!("Step {} of {}", (done + 1).min(trace.steps.len()), trace.steps.len())
+        };
+
+        child.horizontal(|ui| {
+            ui.label(RichText::new(header).size(11.0).color(MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let (Some(run_id), false) = (trace.run_id.clone(), trace.is_settled()) {
+                    if ui.add(ghost_btn("Stop", !is_busy)).clicked() {
+                        action = OverlayAction::StopRun {
+                            run_id,
+                            request_id: trace.request_id.clone(),
+                            reason_code: String::new(),
+                            note: None,
+                        };
+                    }
+                }
+            });
+        });
+        child.add_space(6.0);
+
+        egui::ScrollArea::vertical()
+            .max_height(150.0)
+            .auto_shrink([false, true])
+            .show(&mut child, |ui| {
+                for step in &trace.steps {
+                    ui.horizontal(|ui| {
+                        let (glyph, color) = step_glyph(&step.status);
+                        ui.label(RichText::new(glyph).size(12.0).color(color).monospace());
+                        ui.add_space(2.0);
+                        let mut label = step.title.clone();
+                        if step.attempt > 0 && step.status != "succeeded" {
+                            label.push_str(&format!("  (retry {})", step.attempt));
+                        }
+                        ui.label(RichText::new(label).size(12.5).color(
+                            if step.status == "pending" { MUTED } else { TEXT },
+                        ));
+                    });
+                    // The whole point of the trace: say what went wrong, in words.
+                    if let Some(err) = &step.error_message {
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(RichText::new(err).size(11.0).color(RED));
+                        });
+                    }
+                }
+            });
+
+        // A failed step hands the decision back here.
+        if let Some(task) = trace.tasks.iter().find(|t| t.is_failure()) {
+            child.add_space(8.0);
+            child.label(
+                RichText::new(
+                    task.error_message
+                        .clone()
+                        .unwrap_or_else(|| task.description.clone()),
+                )
+                .size(12.0)
+                .color(RED),
+            );
+            child.add_space(6.0);
+            child.horizontal(|ui| {
+                if task.error_kind.as_deref() == Some("auth")
+                    && ui.add(action_btn("Reconnect", ACCENT, !is_busy)).clicked()
+                {
+                    action = OverlayAction::Reconnect;
+                }
+                if task.allows("retry") && ui.add(action_btn("Retry", ACCENT, !is_busy)).clicked() {
+                    action = OverlayAction::Decide {
+                        task_id: task.id.clone(),
+                        decision: "retry".into(),
+                        reason_code: "retried".into(),
+                        note: None,
+                    };
+                }
+                if ui.add(action_btn("Skip step", MUTED, !is_busy)).clicked() {
+                    action = OverlayAction::Decide {
+                        task_id: task.id.clone(),
+                        decision: "skip".into(),
+                        reason_code: String::new(),
+                        note: None,
+                    };
+                }
+                if ui.add(action_btn("Abandon", RED, !is_busy)).clicked() {
+                    action = OverlayAction::Decide {
+                        task_id: task.id.clone(),
+                        decision: "abandon".into(),
+                        reason_code: String::new(),
+                        note: None,
+                    };
+                }
+            });
+        } else if trace.is_settled() {
+            child.add_space(8.0);
+            let summary = match trace.status.as_str() {
+                "completed" => "Done".to_string(),
+                "abandoned" => trace
+                    .closure_reason
+                    .clone()
+                    .map(|r| format!("Closed — {r}"))
+                    .unwrap_or_else(|| "Closed".to_string()),
+                _ => trace
+                    .closure_reason
+                    .clone()
+                    .unwrap_or_else(|| "Failed".to_string()),
+            };
+            child.label(RichText::new(summary).size(12.0).color(MUTED));
+            if trace.follow_up_required {
+                child.add_space(4.0);
+                child.horizontal(|ui| {
+                    if ui.add(ghost_btn("Unresolved", true)).clicked() {
+                        action = OverlayAction::ShowUnresolved;
+                    }
+                });
+            }
+        }
+
+        if !status.is_empty() {
+            child.add_space(6.0);
+            child.label(RichText::new(status).size(11.0).color(MUTED));
+        }
+        action
+    }
+
+    fn draw_confirm_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let OverlayState::Confirm { prompt, detail, .. } = &self.state else {
+            return OverlayAction::None;
+        };
+        let prompt = prompt.clone();
+        let detail = detail.clone();
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        let mut child = Self::body_ui(ui, pill_rect, pill_w, pill_h, 60.0);
+        child.label(RichText::new(prompt).size(14.0).color(TEXT));
+        if !detail.is_empty() {
+            child.add_space(4.0);
+            child.label(RichText::new(detail).size(11.5).color(MUTED));
+        }
+        child.add_space(10.0);
+        child.horizontal(|ui| {
+            if ui.add(action_btn("Yes", RED, true)).clicked() {
+                confirmed = true;
+            }
+            if ui.add(ghost_btn("No", true)).clicked() {
+                cancelled = true;
+            }
+            ui.label(RichText::new("Y / N").size(10.0).color(MUTED));
+        });
+
+        if confirmed {
+            self.advance_confirm();
+        } else if cancelled {
+            self.cancel_closure();
+        }
+        OverlayAction::None
+    }
+
+    /// Reason capture. A chip is always required; the note is optional and can
+    /// be spoken instead of typed.
+    fn draw_reason_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let (title, chips, mut sel, dictating) = match &self.state {
+            OverlayState::ReasonPrompt {
+                title,
+                chips,
+                selected,
+                dictating,
+                ..
+            } => (title.clone(), chips.clone(), *selected, *dictating),
+            _ => return OverlayAction::None,
+        };
+
+        let mut commit = false;
+        let mut cancel = false;
+        let mut dictate = false;
+
+        {
+            let mut child = Self::body_ui(ui, pill_rect, pill_w, pill_h, 80.0);
+            child.label(RichText::new(format!("{title} — why?")).size(11.0).color(MUTED));
+            child.add_space(8.0);
+
+            // Two rows of three so the chips stay readable at notch width.
+            for row in chips.chunks(3) {
+                let offset = chips
+                    .iter()
+                    .position(|c| c.code == row[0].code)
+                    .unwrap_or(0);
+                child.horizontal(|ui| {
+                    for (i, chip) in row.iter().enumerate() {
+                        let idx = offset + i;
+                        let picked = idx == sel;
+                        let tint = if picked { ACCENT } else { MUTED };
+                        if ui
+                            .add(chip_btn(&format!("{}  {}", idx + 1, chip.label), tint, picked))
+                            .clicked()
+                        {
+                            sel = idx;
+                        }
+                    }
+                });
+                child.add_space(4.0);
+            }
+
+            child.add_space(4.0);
+            if let OverlayState::ReasonPrompt { note, .. } = &mut self.state {
+                child.add(
+                    egui::TextEdit::singleline(note)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(if dictating {
+                            "Listening — speak your reason…"
+                        } else {
+                            "Optional detail (or press Speak)"
+                        }),
+                );
+            }
+            child.add_space(8.0);
+            child.horizontal(|ui| {
+                if ui.add(action_btn("Confirm", ACCENT, true)).clicked() {
+                    commit = true;
+                }
+                if ui
+                    .add(ghost_btn(if dictating { "Listening…" } else { "Speak" }, !dictating))
+                    .clicked()
+                {
+                    dictate = true;
+                }
+                if ui.add(ghost_btn("Back", true)).clicked() {
+                    cancel = true;
+                }
+            });
+        }
+
+        if let OverlayState::ReasonPrompt { selected, .. } = &mut self.state {
+            *selected = sel;
+        }
+
+        if commit {
+            return self.commit_reason();
+        }
+        if cancel {
+            self.cancel_closure();
+        }
+        if dictate {
+            self.set_dictating(true);
+            return OverlayAction::Dictate;
+        }
+        OverlayAction::None
+    }
+
+    /// Everything still owed back to the user after the agent stopped.
+    fn draw_unresolved_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let OverlayState::Unresolved { data, status } = &self.state else {
+            return OverlayAction::None;
+        };
+        let data = data.clone();
+        let status = status.clone();
+        let mut action = OverlayAction::None;
+
+        let mut child = Self::body_ui(ui, pill_rect, pill_w, pill_h, 80.0);
+        child.label(
+            RichText::new(format!(
+                "Unresolved  ·  {} open  ·  {} needing you",
+                data.open.len(),
+                data.follow_ups.len()
+            ))
+            .size(11.0)
+            .color(MUTED),
+        );
+        child.add_space(8.0);
+
+        egui::ScrollArea::vertical()
+            .max_height(210.0)
+            .auto_shrink([false, true])
+            .show(&mut child, |ui| {
+                for task in &data.open {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(format!("• {}", task.description))
+                                    .size(12.0)
+                                    .color(TEXT),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE),
+                        )
+                        .clicked()
+                    {
+                        action = OverlayAction::OpenTask { task: task.clone() };
+                    }
+                    ui.add_space(3.0);
+                }
+                if !data.follow_ups.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Closed, still yours").size(10.5).color(MUTED));
+                    ui.add_space(4.0);
+                    for item in &data.follow_ups {
+                        ui.label(RichText::new(format!("• {}", item.description)).size(12.0).color(TEXT));
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · by {} · {}",
+                                    item.reason, item.closed_by, item.closed_at
+                                ))
+                                .size(10.5)
+                                .color(MUTED),
+                            );
+                        });
+                        ui.add_space(4.0);
+                    }
+                }
+                if data.open.is_empty() && data.follow_ups.is_empty() {
+                    ui.label(RichText::new("Nothing outstanding.").size(12.0).color(MUTED));
+                }
+            });
+
+        if !status.is_empty() {
+            child.add_space(6.0);
+            child.label(RichText::new(status).size(11.0).color(MUTED));
         }
         action
     }
@@ -512,6 +1365,17 @@ impl Overlay {
                 }
             }
             OverlayState::Feedback { .. } | OverlayState::Pairing { .. } => ACCENT,
+            OverlayState::Flow { trace, .. } => {
+                if trace.steps.iter().any(|s| s.status == "failed") {
+                    RED
+                } else if trace.status == "completed" {
+                    GREEN
+                } else {
+                    ACCENT
+                }
+            }
+            OverlayState::Confirm { .. } => RED,
+            OverlayState::ReasonPrompt { .. } | OverlayState::Unresolved { .. } => ACCENT,
             _ => MUTED,
         }
     }
@@ -570,7 +1434,11 @@ impl Overlay {
             }
             OverlayState::Result { .. }
             | OverlayState::Feedback { .. }
-            | OverlayState::Pairing { .. } => {
+            | OverlayState::Pairing { .. }
+            | OverlayState::Flow { .. }
+            | OverlayState::Confirm { .. }
+            | OverlayState::ReasonPrompt { .. }
+            | OverlayState::Unresolved { .. } => {
                 // Close affordance
                 let s = 5.0;
                 p.line_segment(
@@ -596,6 +1464,39 @@ fn ghost_btn(label: &str, enabled: bool) -> egui::Button<'_> {
         .corner_radius(CornerRadius::same(8))
         .min_size(Vec2::new(64.0, 28.0))
         .sense(if enabled { Sense::click() } else { Sense::hover() })
+}
+
+/// Reason chip. The selected one fills in; the rest stay outlines.
+fn chip_btn(label: &str, tint: Color32, picked: bool) -> egui::Button<'_> {
+    egui::Button::new(RichText::new(label).size(11.5).color(if picked { TEXT } else { MUTED }))
+        .fill(if picked {
+            tint.gamma_multiply(0.30)
+        } else {
+            THUMB_BG
+        })
+        .stroke(Stroke::new(
+            1.0_f32,
+            if picked {
+                tint.gamma_multiply(0.7)
+            } else {
+                Color32::from_rgb(0x33, 0x33, 0x33)
+            },
+        ))
+        .corner_radius(CornerRadius::same(9))
+        .min_size(Vec2::new(96.0, 26.0))
+}
+
+/// Status marker for one row of the agent flow.
+fn step_glyph(status: &str) -> (&'static str, Color32) {
+    match status {
+        "succeeded" => ("✔", GREEN),
+        "failed" => ("✖", RED),
+        "running" => ("⏵", ACCENT),
+        "awaiting_input" => ("?", ACCENT),
+        "skipped" => ("–", MUTED),
+        "abandoned" => ("✖", MUTED),
+        _ => ("•", MUTED),
+    }
 }
 
 fn action_btn(label: &str, tint: Color32, enabled: bool) -> egui::Button<'_> {

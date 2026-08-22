@@ -10,12 +10,15 @@ pub struct Tray {
     _icon: TrayIcon,
     pub quit_id: muda::MenuId,
     pub pair_id: muda::MenuId,
+    pub unresolved_id: muda::MenuId,
 }
 
 pub enum TrayAction {
     None,
     Quit,
     Pair,
+    /// Open the handback inbox: what the agent left for the user to finish.
+    Unresolved,
 }
 
 impl Tray {
@@ -28,11 +31,14 @@ impl Tray {
         let quit_id = quit.id().clone();
         let pair = MenuItem::new("Pair account…", true, None);
         let pair_id = pair.id().clone();
+        let unresolved = MenuItem::new("Unresolved…", true, None);
+        let unresolved_id = unresolved.id().clone();
 
         let menu = Menu::new();
         menu.append(&MenuItem::new("local-stt (Parakeet INT8)", false, None))?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&MenuItem::new("Ctrl+Shift+Space to record", false, None))?;
+        menu.append(&unresolved)?;
         menu.append(&pair)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
@@ -48,6 +54,7 @@ impl Tray {
             _icon: tray,
             quit_id,
             pair_id,
+            unresolved_id,
         })
     }
 
@@ -62,6 +69,8 @@ impl Tray {
                 action = TrayAction::Quit;
             } else if event.id == self.pair_id {
                 action = TrayAction::Pair;
+            } else if event.id == self.unresolved_id {
+                action = TrayAction::Unresolved;
             }
         }
         action

@@ -37,8 +37,20 @@ if (fs.existsSync(migrationsDir)) {
         db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
       });
 
-      applyMigration();
-      console.log(`[DB] Migration applied successfully: ${file}`);
+      try {
+        applyMigration();
+        console.log(`[DB] Migration applied successfully: ${file}`);
+      } catch (err) {
+        // A column an older migration adds may already exist in the current
+        // 01_initial_schema.sql. SQLite has no ADD COLUMN IF NOT EXISTS, so
+        // treat that specific case as already-applied instead of refusing to
+        // boot a fresh database.
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("duplicate column name")) throw err;
+
+        db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(file);
+        console.log(`[DB] Migration already satisfied by schema, marked applied: ${file}`);
+      }
     }
   }
 } else {

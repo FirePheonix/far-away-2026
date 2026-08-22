@@ -25,16 +25,25 @@ export class ToolNotFoundError extends AppError {
 }
 
 export class ToolExecutionError extends AppError {
+  /**
+   * The provider error, kept intact. normalizeToolError() reads status codes
+   * and payloads off it, which a flattened string would have thrown away.
+   */
+  public readonly cause: unknown;
+  public readonly toolName: string;
+
   constructor(toolName: string, cause: unknown) {
     super(
       `Tool execution failed: ${toolName}`,
       500,
       "TOOL_EXECUTION_ERROR",
-      cause instanceof Error 
+      cause instanceof Error
         ? ((cause as any).response?.data ? JSON.stringify((cause as any).response.data) : cause.message)
         : cause,
     );
     this.name = "ToolExecutionError";
+    this.cause = cause;
+    this.toolName = toolName;
   }
 }
 

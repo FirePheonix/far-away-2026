@@ -29,9 +29,12 @@ export const pendingTaskTool: AnyToolDefinition = {
       id: taskId,
       clerk_user_id: context.user.clerkUserId,
       run_id: context.request?.id ?? null,
+      kind: "user_input",
+      step_index: context.executionState.currentStep,
       description: params.description,
       required_fields: params.required_fields,
       status: "pending",
+      wait_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
 
     if (error) {

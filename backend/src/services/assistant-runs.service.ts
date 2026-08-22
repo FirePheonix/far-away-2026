@@ -138,22 +138,7 @@ export async function completeAssistantRun(params: {
     console.error("[AssistantRuns] Failed to complete run", runError.message);
   }
 
-  if (!params.stepsExecuted?.length) return;
-
-  const { error: stepsError } = await supabaseAdmin.from("assistant_steps").insert(
-    params.stepsExecuted.map((step) => ({
-      id: randomUUID(),
-      run_id: params.runId!,
-      step_index: step.index,
-      tool_name: step.tool,
-      params_json: step.params ?? null,
-      result_json: step.result ?? null,
-      success: true,
-      duration_ms: step.durationMs,
-    })),
-  );
-
-  if (stepsError) {
-    console.error("[AssistantRuns] Failed to persist steps", stepsError.message);
-  }
+  // assistant_steps is owned by run-trace.service, which wrote each row as the
+  // step actually ran. Re-writing them here would flatten failed and skipped
+  // steps back to "succeeded".
 }

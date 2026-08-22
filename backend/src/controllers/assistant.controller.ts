@@ -5,6 +5,15 @@ import { env } from "../config/env.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { createAssistantRequest } from "../services/assistant-runs.service.js";
 import { resolveDesktopToken } from "../services/desktop-auth.service.js";
+import { loadTrace } from "../services/run-trace.service.js";
+import {
+  CLOSURE_REASONS,
+  closeRun,
+  closeTask,
+  loadUnresolved,
+  resolveClosure,
+  teachFromClosure,
+} from "../services/closure.service.js";
 import { inngest, ASSISTANT_EVENTS } from "../workflows/inngest.js";
 import { runAssistantPipeline } from "../workflows/assistant.workflow.js";
 import type { AssistantResponseBody } from "../types/index.js";
@@ -60,6 +69,9 @@ export async function postAssistant(
 
     if (asyncMode) {
       await inngest.send({
+        // Deterministic id so a double hotkey tap can't launch the same
+        // request twice — Inngest dedupes on it.
+        id: `voice-request-${requestId}`,
         name: ASSISTANT_EVENTS.voiceRequestReceived,
         data: {
           transcript,
@@ -145,6 +157,76 @@ export async function getAssistantRequestStatus(
   }
 }
 
+/**
+ * GET /api/assistant/requests/:requestId/trace
+ *
+ * The live agent flow: the plan, each step's status, and the readable reason a
+ * step failed. Polled by the desktop overlay about once a second while a run
+ * is in flight.
+ */
+export async function getAssistantRequestTrace(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const clerkUserId = await assistantUserId(req);
+    if (!clerkUserId) {
+      res.status(401).json({ success: false, message: "Missing assistant user id" });
+      return;
+    }
+
+    const trace = await loadTrace(req.params.requestId, clerkUserId);
+    if (!trace) {
+      res.status(404).json({ success: false, message: "Assistant request not found" });
+      return;
+    }
+
+    res.json({ success: true, ...trace });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/assistant/unresolved
+ *
+ * Handback inbox: what is still waiting on the user, plus recently closed work
+ * that was flagged as leaving something behind.
+ */
+export async function getUnresolved(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const clerkUserId = await assistantUserId(req);
+    if (!clerkUserId) {
+      res.status(401).json({ success: false, message: "Missing assistant user id" });
+      return;
+    }
+
+    const unresolved = await loadUnresolved(clerkUserId);
+    res.json({ success: true, ...unresolved });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/assistant/closure-reasons
+ * Lets the desktop render reason chips without hardcoding the vocabulary.
+ */
+export async function getClosureReasons(_req: Request, res: Response): Promise<void> {
+  res.json({
+    success: true,
+    reasons: CLOSURE_REASONS.filter((reason) => reason.userSelectable).map((reason) => ({
+      code: reason.code,
+      label: reason.label,
+    })),
+  });
+}
+
 export async function getTools(_req: Request, res: Response): Promise<void> {
   const { listToolMetadata } = await import("../tools/registry.js");
   res.json({ tools: listToolMetadata().map((t) => ({ name: t.name, description: t.description })) });
@@ -177,14 +259,23 @@ export async function getPendingTasks(
 
     const { data: tasks, error } = await supabaseAdmin
       .from("pending_tasks")
-      .select("id, description, required_fields, status, created_at, updated_at")
+      .select(
+        "id, run_id, kind, step_index, description, required_fields, context_json, status, resume_at, wait_expires_at, created_at, updated_at",
+      )
       .eq("clerk_user_id", clerkUserId)
       .eq("status", "pending")
       .order("created_at", { ascending: false });
 
     if (error) throw new Error(error.message);
 
-    res.json({ success: true, tasks: tasks ?? [] });
+    // A snoozed task is still pending in the workflow's eyes, but it should
+    // stay out of the overlay until the user asked to see it again.
+    const now = Date.now();
+    const visible = (tasks ?? []).filter(
+      (task) => !task.resume_at || new Date(task.resume_at).getTime() <= now,
+    );
+
+    res.json({ success: true, tasks: visible, snoozed: (tasks ?? []).length - visible.length });
   } catch (err) {
     next(err);
   }
@@ -193,11 +284,21 @@ export async function getPendingTasks(
 // ---------------------------------------------------------------------------
 // Helper: resolve a pending task row — shared by submit/skip/abandon/edit
 // ---------------------------------------------------------------------------
+interface TaskRow {
+  id: string;
+  run_id: string;
+  status: string;
+  kind: string | null;
+  step_index: number | null;
+  description: string | null;
+  wait_expires_at: string | null;
+}
+
 async function resolvePendingTaskRow(
   req: Request,
   res: Response,
   next: NextFunction,
-  handler: (task: { id: string; run_id: string }, clerkUserId: string) => Promise<void>,
+  handler: (task: TaskRow, clerkUserId: string) => Promise<void>,
 ): Promise<void> {
   try {
     const clerkUserId = await assistantUserId(req);
@@ -209,7 +310,7 @@ async function resolvePendingTaskRow(
     const taskId = req.params.taskId;
     const { data: task, error } = await supabaseAdmin
       .from("pending_tasks")
-      .select("id, status, run_id")
+      .select("id, status, run_id, kind, step_index, description, wait_expires_at")
       .eq("id", taskId)
       .eq("clerk_user_id", clerkUserId)
       .maybeSingle();
@@ -258,69 +359,261 @@ export async function submitPendingTask(
   });
 }
 
+/** Reads the closure fields the desktop sends, tolerating the older `reason`. */
+function closureFromBody(req: Request) {
+  const body = (req.body ?? {}) as {
+    reasonCode?: string;
+    note?: string;
+    reason?: string;
+  };
+  return {
+    reasonCode: body.reasonCode ?? undefined,
+    note: body.note ?? body.reason ?? undefined,
+  };
+}
+
 /**
  * POST /api/assistant/tasks/:taskId/skip
- * Body: { reason?: string }
+ * Body: { reasonCode?: string, note?: string }
  *
- * Marks the task skipped and sends a taskSkipped event so the workflow
- * continues to the next action without this step's data.
+ * Records why this step was skipped, then resumes the workflow so it continues
+ * to the next action without this step's data.
  */
 export async function skipPendingTask(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  await resolvePendingTaskRow(req, res, next, async (task) => {
-    const reason: string = req.body?.reason ?? "Skipped by user";
-
-    await supabaseAdmin
-      .from("pending_tasks")
-      .update({
-        status: "skipped",
-        abandonment_reason: reason,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", task.id);
-
-    await inngest.send({
-      name: ASSISTANT_EVENTS.taskSkipped,
-      data: { taskId: task.id, requestId: task.run_id, reason },
+  await resolvePendingTaskRow(req, res, next, async (task, clerkUserId) => {
+    const { reasonCode, note } = closureFromBody(req);
+    const closure = resolveClosure({
+      reasonCode: reasonCode ?? "deferred",
+      note,
+      closedBy: "user",
+      // Skipping leaves that piece of work undone by definition.
+      followUpRequired: true,
     });
 
-    res.json({ success: true, skipped: true, reason });
+    await closeTask({ taskId: task.id, status: "skipped", closure });
+
+    const event =
+      task.kind === "step_failure" ? ASSISTANT_EVENTS.stepDecision : ASSISTANT_EVENTS.taskSkipped;
+
+    await inngest.send({
+      name: event,
+      data: {
+        taskId: task.id,
+        requestId: task.run_id,
+        stepIndex: task.step_index,
+        decision: "skip",
+        reasonCode: closure.closure_reason_code,
+        note: closure.closure_note,
+        reason: closure.abandonment_reason,
+      },
+    });
+
+    await teachFromClosure({
+      clerkUserId,
+      closure,
+      subject: task.description,
+      requestId: task.run_id,
+    });
+
+    res.json({
+      success: true,
+      skipped: true,
+      reasonCode: closure.closure_reason_code,
+      reason: closure.abandonment_reason,
+      followUpRequired: closure.follow_up_required,
+    });
   });
 }
 
 /**
  * POST /api/assistant/tasks/:taskId/abandon
- * Body: { reason: string }
+ * Body: { reasonCode?: string, note?: string }
  *
- * Marks the task abandoned (with reason), then fires a taskAbandoned event
- * which causes the workflow to stop and record the abandonment in the DB.
+ * Records the closure and stops the run. The workflow writes the run-level
+ * closure when it unwinds; this handler owns the task-level record.
  */
 export async function abandonPendingTask(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
+  await resolvePendingTaskRow(req, res, next, async (task, clerkUserId) => {
+    const { reasonCode, note } = closureFromBody(req);
+    const closure = resolveClosure({
+      reasonCode: reasonCode ?? "no_longer_needed",
+      note,
+      closedBy: "user",
+    });
+
+    await closeTask({ taskId: task.id, status: "abandoned", closure });
+
+    const event =
+      task.kind === "step_failure" ? ASSISTANT_EVENTS.stepDecision : ASSISTANT_EVENTS.taskAbandoned;
+
+    await inngest.send({
+      name: event,
+      data: {
+        taskId: task.id,
+        requestId: task.run_id,
+        stepIndex: task.step_index,
+        decision: "abandon",
+        reasonCode: closure.closure_reason_code,
+        note: closure.closure_note,
+        reason: closure.abandonment_reason,
+      },
+    });
+
+    await teachFromClosure({
+      clerkUserId,
+      closure,
+      subject: task.description,
+      requestId: task.run_id,
+    });
+
+    res.json({
+      success: true,
+      abandoned: true,
+      reasonCode: closure.closure_reason_code,
+      reason: closure.abandonment_reason,
+      followUpRequired: closure.follow_up_required,
+    });
+  });
+}
+
+/**
+ * POST /api/assistant/tasks/:taskId/pause
+ * Body: { minutes?: number, reasonCode?: string, note?: string }
+ *
+ * Snooze. The workflow is already parked in waitForEvent, so pausing needs no
+ * event at all — it records the reason and hides the prompt until resume_at.
+ * The snooze is capped inside the wait window so a paused task always resumes
+ * into the same run.
+ */
+export async function pausePendingTask(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   await resolvePendingTaskRow(req, res, next, async (task) => {
-    const reason: string = req.body?.reason ?? "Abandoned by user";
+    const requested = Number((req.body as { minutes?: number })?.minutes ?? 60);
+    const minutes = Number.isFinite(requested) ? Math.max(5, Math.floor(requested)) : 60;
+
+    // Leave a margin so the task resurfaces before the workflow gives up.
+    const deadline = task.wait_expires_at
+      ? new Date(task.wait_expires_at).getTime() - 5 * 60 * 1000
+      : Date.now() + 23 * 60 * 60 * 1000;
+
+    const requestedAt = Date.now() + minutes * 60 * 1000;
+    const capped = Math.min(requestedAt, deadline);
+
+    if (capped <= Date.now()) {
+      res.status(400).json({
+        success: false,
+        message: "This task is too close to its deadline to snooze",
+      });
+      return;
+    }
+
+    const { reasonCode, note } = closureFromBody(req);
 
     await supabaseAdmin
       .from("pending_tasks")
       .update({
-        status: "abandoned",
-        abandonment_reason: reason,
+        paused_at: new Date().toISOString(),
+        resume_at: new Date(capped).toISOString(),
+        closure_reason_code: reasonCode ?? "deferred",
+        closure_note: note ?? null,
+        follow_up_required: true,
+        follow_up_owner: "user",
         updated_at: new Date().toISOString(),
       })
       .eq("id", task.id);
 
-    await inngest.send({
-      name: ASSISTANT_EVENTS.taskAbandoned,
-      data: { taskId: task.id, requestId: task.run_id, reason },
+    res.json({
+      success: true,
+      paused: true,
+      resumeAt: new Date(capped).toISOString(),
+      cappedTo: capped < requestedAt ? "wait_window" : null,
+      maxMinutes: Math.max(0, Math.floor((deadline - Date.now()) / 60000)),
+    });
+  });
+}
+
+/**
+ * POST /api/assistant/tasks/:taskId/decide
+ * Body: { decision: "retry" | "skip" | "abandon", reasonCode?, note? }
+ *
+ * Answers a step_failure handback. Retry re-executes the failed step under a
+ * fresh Inngest step id; skip and abandon close it out with a reason.
+ */
+export async function decidePendingTask(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  await resolvePendingTaskRow(req, res, next, async (task, clerkUserId) => {
+    const { decision } = (req.body ?? {}) as { decision?: string };
+
+    if (decision !== "retry" && decision !== "skip" && decision !== "abandon") {
+      res.status(400).json({
+        success: false,
+        message: 'decision must be one of "retry", "skip", "abandon"',
+      });
+      return;
+    }
+
+    const { reasonCode, note } = closureFromBody(req);
+    const closure = resolveClosure({
+      reasonCode: reasonCode ?? (decision === "retry" ? "deferred" : "ai_got_it_wrong"),
+      note,
+      closedBy: "user",
+      followUpRequired: decision !== "retry",
     });
 
-    res.json({ success: true, abandoned: true, reason });
+    if (decision === "retry") {
+      await supabaseAdmin
+        .from("pending_tasks")
+        .update({
+          status: "resolved",
+          closure_reason_code: "retried",
+          closure_note: closure.closure_note,
+          closed_by: "user",
+          closed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", task.id);
+    } else {
+      await closeTask({
+        taskId: task.id,
+        status: decision === "skip" ? "skipped" : "abandoned",
+        closure,
+      });
+
+      await teachFromClosure({
+        clerkUserId,
+        closure,
+        subject: task.description,
+        requestId: task.run_id,
+      });
+    }
+
+    await inngest.send({
+      name: ASSISTANT_EVENTS.stepDecision,
+      data: {
+        taskId: task.id,
+        requestId: task.run_id,
+        stepIndex: task.step_index,
+        decision,
+        reasonCode: closure.closure_reason_code,
+        note: closure.closure_note,
+      },
+    });
+
+    res.json({ success: true, decision, reasonCode: closure.closure_reason_code });
   });
 }
 
@@ -387,10 +680,19 @@ export async function abandonAssistantRunHandler(
     }
 
     const runId = req.params.runId;
-    const { reason, requestId } = req.body as { reason: string; requestId: string };
+    const { requestId } = req.body as { requestId?: string };
+    const { reasonCode, note } = closureFromBody(req);
 
-    if (!reason || !requestId) {
-      res.status(400).json({ success: false, message: "reason and requestId are required" });
+    if (!requestId) {
+      res.status(400).json({ success: false, message: "requestId is required" });
+      return;
+    }
+
+    if (!reasonCode && !note) {
+      res.status(400).json({
+        success: false,
+        message: "a reasonCode or note is required to close a run",
+      });
       return;
     }
 
@@ -409,29 +711,55 @@ export async function abandonAssistantRunHandler(
       return;
     }
 
-    // Update immediately (cancelOn may take a moment to propagate)
-    await supabaseAdmin
-      .from("assistant_runs")
-      .update({
-        success: false,
-        message: `Abandoned: ${reason}`,
-        abandonment_reason: reason,
-        finished_at: new Date().toISOString(),
-      })
-      .eq("id", runId);
+    const closure = resolveClosure({
+      reasonCode: reasonCode ?? "no_longer_needed",
+      note,
+      closedBy: "user",
+    });
 
+    // Write closure immediately. A cancelled function never reaches its own
+    // catch block or onFailure, so this handler is the only place the reason
+    // can be recorded.
+    await closeRun({
+      runId,
+      requestId,
+      requestStatus: "abandoned",
+      message: `Closed: ${closure.abandonment_reason}`,
+      closure,
+    });
+
+    // Any task still waiting on this run is closed by the same decision.
     await supabaseAdmin
-      .from("assistant_requests")
-      .update({ status: "abandoned" })
-      .eq("id", requestId);
+      .from("pending_tasks")
+      .update({
+        status: "abandoned",
+        abandonment_reason: closure.abandonment_reason,
+        closure_reason_code: closure.closure_reason_code,
+        closure_note: closure.closure_note,
+        closed_by: closure.closed_by,
+        closed_at: closure.closed_at,
+        follow_up_required: closure.follow_up_required,
+        follow_up_owner: closure.follow_up_owner,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("run_id", requestId)
+      .eq("status", "pending");
 
     // Fire the cancelOn event — Inngest will kill the workflow
     await inngest.send({
       name: ASSISTANT_EVENTS.runAbandoned,
-      data: { runId, requestId, reason },
+      data: { runId, requestId, reason: closure.abandonment_reason },
     });
 
-    res.json({ success: true, abandoned: true, reason });
+    await teachFromClosure({ clerkUserId, closure, requestId });
+
+    res.json({
+      success: true,
+      abandoned: true,
+      reasonCode: closure.closure_reason_code,
+      reason: closure.abandonment_reason,
+      followUpRequired: closure.follow_up_required,
+    });
   } catch (err) {
     next(err);
   }
