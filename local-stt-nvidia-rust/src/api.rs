@@ -7,11 +7,17 @@ use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiOption {
+    pub label: String,
+    pub description: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingTask {
     pub id: String,
     pub description: String,
-    /// "user_input" when the planner needs details, "step_failure" when a tool
-    /// failed permanently and is handing the work back.
+    /// "user_input" | "step_failure" | "confirm" | "options"
     pub kind: String,
     pub request_id: Option<String>,
     pub step_index: Option<i64>,
@@ -21,6 +27,10 @@ pub struct PendingTask {
     pub tool: Option<String>,
     /// Which buttons the backend says are available: retry / skip / abandon / reconnect.
     pub actions: Vec<String>,
+    /// AI-generated options for propose_options tasks.
+    pub ai_options: Vec<AiOption>,
+    /// One-sentence situation description for propose_options tasks.
+    pub situation: Option<String>,
     /// When the workflow stops waiting — bounds how long a snooze may be.
     pub wait_expires_at: Option<String>,
 }
@@ -28,6 +38,9 @@ pub struct PendingTask {
 impl PendingTask {
     pub fn is_failure(&self) -> bool {
         self.kind == "step_failure"
+    }
+    pub fn is_options(&self) -> bool {
+        self.kind == "options"
     }
     pub fn allows(&self, action: &str) -> bool {
         self.actions.is_empty() || self.actions.iter().any(|a| a == action)
@@ -58,6 +71,8 @@ pub struct Trace {
     pub status: String,
     pub steps: Vec<FlowStep>,
     pub tasks: Vec<PendingTask>,
+    /// The AI's final summary message when the run completed successfully.
+    pub run_message: Option<String>,
     pub closure_reason: Option<String>,
     pub closed_by: Option<String>,
     pub follow_up_required: bool,
@@ -126,6 +141,25 @@ impl TaskJson {
             })
             .unwrap_or_default();
 
+        // Parse AI-generated options for propose_options tasks
+        let ai_options = ctx
+            .get("options")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|o| {
+                        Some(AiOption {
+                            label: o.get("label")?.as_str()?.to_string(),
+                            description: o.get("description")?.as_str()?.to_string(),
+                            value: o.get("value")?.as_str()?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let situation = str_field("situation");
+
         PendingTask {
             id: self.id,
             description: if self.description.trim().is_empty() {
@@ -140,6 +174,8 @@ impl TaskJson {
             error_kind: str_field("errorKind"),
             tool: str_field("tool"),
             actions,
+            ai_options,
+            situation,
             wait_expires_at: self.wait_expires_at,
         }
     }
@@ -242,12 +278,16 @@ pub fn send_command(
     }
 }
 
-pub fn fetch_pending_tasks(backend_url: &str, token: Option<&str>) -> Result<Vec<PendingTask>> {
+pub fn fetch_pending_tasks(backend_url: &str, token: Option<&str>, request_id: Option<&str>) -> Result<Vec<PendingTask>> {
+    let path = match request_id {
+        Some(rid) => format!("/api/assistant/tasks?requestId={rid}"),
+        None => "/api/assistant/tasks".to_string(),
+    };
     let (status, body_text) = request(
         reqwest::Method::GET,
         backend_url,
         token,
-        "/api/assistant/tasks",
+        &path,
         None,
     )?;
     if !status.is_success() {
@@ -329,6 +369,12 @@ pub fn fetch_trace(backend_url: &str, token: Option<&str>, request_id: &str) -> 
             .to_string(),
         steps,
         tasks,
+        // AI's final summary message — shown in overlay on completion
+        run_message: run
+            .and_then(|r| r.get("message"))
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty() && *s != "Running")
+            .map(|s| s.to_string()),
         closure_reason: run
             .and_then(|r| r.get("abandonment_reason").or_else(|| r.get("closure_note")))
             .and_then(|x| x.as_str())
@@ -533,6 +579,24 @@ pub fn decide_task(
         Ok(())
     } else {
         Err(anyhow::anyhow!("Decision failed ({status})"))
+    }
+}
+
+/// Submit the user's chosen option for a propose_options task.
+/// The value is passed back to the AI as the tool result.
+pub fn choose_option(
+    backend_url: &str,
+    token: Option<&str>,
+    task_id: &str,
+    value: &str,
+) -> Result<()> {
+    let path = format!("/api/assistant/tasks/{task_id}/submit");
+    let body = serde_json::json!({ "choice": value });
+    let (status, _) = request(reqwest::Method::POST, backend_url, token, &path, Some(body))?;
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Option choice failed ({status})"))
     }
 }
 

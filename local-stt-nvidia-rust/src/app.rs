@@ -470,11 +470,28 @@ impl LocalSttApp {
                     (true, sent.message, sent.request_id)
                 }
                 Err(e) => {
-                    // Don't include the raw error chain in the message shown to the
-                    // user or stdout — it may contain URL/header fragments.
-                    let display = format!("{e}");
-                    log::debug!("[local-stt] Command failed (detail): {e:#}");
-                    println!("[local-stt] Command failed: {display}");
+                    let raw = format!("{e:#}");
+                    log::debug!("[local-stt] Command failed (detail): {raw}");
+                    println!("[local-stt] Command failed");
+
+                    // Translate low-level network errors into readable messages.
+                    let display = if raw.contains("ECONNREFUSED")
+                        || raw.contains("Connection refused")
+                        || raw.contains("connect error")
+                        || raw.contains("tcp connect")
+                    {
+                        "Backend isn't running. Start the server and try again.".into()
+                    } else if raw.contains("timed out") || raw.contains("timeout") {
+                        "Request timed out — check your connection.".into()
+                    } else if raw.contains("401") || raw.contains("Unauthorized") {
+                        "Not authenticated — re-pair this device in the dashboard.".into()
+                    } else if raw.contains("500") || raw.contains("Internal Server Error") {
+                        "Server error. Check the backend logs.".into()
+                    } else {
+                        // Keep the message but strip the URL/stack if it's in there.
+                        let short = format!("{e}");
+                        if short.len() > 120 { short[..120].to_string() + "…" } else { short }
+                    };
                     (false, display, None)
                 }
             };
@@ -800,10 +817,13 @@ impl LocalSttApp {
         let cfg = config::load();
         let backend_url = cfg.backend_url.clone();
         let token = cfg.desktop_token.clone();
+        // Only fetch tasks for the active request so stale tasks from old runs
+        // never flood the overlay. Falls back to all tasks if no active run.
+        let active = self.active_request.clone();
         let tx = self.worker_tx.clone();
         let wake = self.ui_wake.clone();
         thread::spawn(move || {
-            match api::fetch_pending_tasks(&backend_url, token.as_deref()) {
+            match api::fetch_pending_tasks(&backend_url, token.as_deref(), active.as_deref()) {
                 Ok(tasks) => {
                     let _ = tx.send(WorkerMsg::TasksFetched { tasks });
                 }
@@ -1116,6 +1136,7 @@ impl LocalSttApp {
             OverlayAction::Change { .. } => "Sending change…",
             OverlayAction::Pause { .. } => "Snoozing…",
             OverlayAction::StopRun { .. } => "Stopping…",
+            OverlayAction::ChooseOption { .. } => "Choosing…",
             OverlayAction::Decide { decision, .. } => {
                 if decision == "retry" {
                     "Retrying…"
@@ -1189,6 +1210,10 @@ impl LocalSttApp {
                     instruction,
                 } => api::change_task(&backend_url, t, &task_id, &instruction)
                     .map(|_| "Change sent".to_string()),
+                OverlayAction::ChooseOption { task_id, value } => {
+                    api::choose_option(&backend_url, t, &task_id, &value)
+                        .map(|_| "Option sent".to_string())
+                }
                 _ => Ok(String::new()),
             };
             let (ok, message) = match result {

@@ -174,6 +174,11 @@ pub enum OverlayAction {
         task_id: String,
         instruction: String,
     },
+    /// User picked one of the AI-generated propose_options choices.
+    ChooseOption {
+        task_id: String,
+        value: String,
+    },
     /// Open the dashboard so the user can reconnect a revoked integration.
     Reconnect,
     /// Jump from the Unresolved inbox onto a still-open task.
@@ -898,6 +903,26 @@ impl Overlay {
                     change_text.clear();
                 }
             });
+        } else if task.is_options() {
+            // ── AI-generated propose_options ──────────────────────────────────
+            // Show the AI's situation + its own dynamically generated buttons.
+            if let Some(ref sit) = task.situation {
+                child.label(RichText::new(sit).size(12.0).color(MUTED));
+                child.add_space(8.0);
+            }
+            for opt in &task.ai_options {
+                child.horizontal(|ui| {
+                    if ui.add(action_btn(&opt.label, ACCENT, !is_busy)).clicked() {
+                        action = OverlayAction::ChooseOption {
+                            task_id: task.id.clone(),
+                            value: opt.value.clone(),
+                        };
+                    }
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(&opt.description).size(11.0).color(MUTED));
+                });
+                child.add_space(4.0);
+            }
         } else {
             child.horizontal(|ui| {
                 // reason_code is left empty on purpose: the app routes these
@@ -1087,8 +1112,12 @@ impl Overlay {
             });
         } else if trace.is_settled() {
             child.add_space(8.0);
+            // Use the AI's own finalMessage for completed runs, not a hardcoded "Done".
             let summary = match trace.status.as_str() {
-                "completed" => "Done".to_string(),
+                "completed" => trace
+                    .run_message
+                    .clone()
+                    .unwrap_or_else(|| "Done.".to_string()),
                 "abandoned" => trace
                     .closure_reason
                     .clone()
@@ -1099,7 +1128,13 @@ impl Overlay {
                     .clone()
                     .unwrap_or_else(|| "Failed".to_string()),
             };
-            child.label(RichText::new(summary).size(12.0).color(MUTED));
+            // Wrap long summaries — the AI can write multi-sentence completions.
+            egui::ScrollArea::vertical()
+                .max_height(60.0)
+                .auto_shrink([false, true])
+                .show(&mut child, |ui| {
+                    ui.label(RichText::new(summary).size(12.0).color(MUTED));
+                });
             if trace.follow_up_required {
                 child.add_space(4.0);
                 child.horizontal(|ui| {

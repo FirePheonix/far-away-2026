@@ -15,6 +15,7 @@ import {
   pausePendingTask,
   decidePendingTask,
   abandonAssistantRunHandler,
+  getFailureAdvice,
 } from "../controllers/assistant.controller.js";
 import { validate } from "../middleware/validate.js";
 import { assistantRequestSchema } from "../ai/schemas.js";
@@ -40,6 +41,7 @@ assistantRouter.post("/assistant/tasks/:taskId/abandon", abandonPendingTask);
 assistantRouter.post("/assistant/tasks/:taskId/edit", editPendingTask);
 assistantRouter.post("/assistant/tasks/:taskId/pause", pausePendingTask);
 assistantRouter.post("/assistant/tasks/:taskId/decide", decidePendingTask);
+assistantRouter.post("/assistant/tasks/:taskId/advice", getFailureAdvice);
 
 // Run-level abandonment (kills the whole workflow via cancelOn)
 assistantRouter.post("/assistant/runs/:runId/abandon", abandonAssistantRunHandler);

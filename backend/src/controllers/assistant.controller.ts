@@ -256,14 +256,26 @@ export async function getPendingTasks(
       return;
     }
 
-    const { data: tasks, error } = await supabaseAdmin
+    // Optional ?requestId= filter — when provided only return tasks for that
+    // specific assistant run so the overlay never shows stale tasks from old runs.
+    const requestId = req.query.requestId as string | undefined;
+
+    let q = supabaseAdmin
       .from("pending_tasks")
       .select(
         "id, run_id, kind, step_index, description, required_fields, context_json, status, resume_at, wait_expires_at, created_at, updated_at",
       )
       .eq("clerk_user_id", clerkUserId)
       .eq("status", "pending")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: true }); // oldest first — process in order
+
+    if (requestId) {
+      // context_json stores the requestId (assistant_requests.id) so we can
+      // filter tasks by the active run without a JOIN.
+      q = q.eq("context_json->>requestId", requestId);
+    }
+
+    const { data: tasks, error } = await q;
 
     if (error) throw new Error(error.message);
 
@@ -759,6 +771,79 @@ export async function abandonAssistantRunHandler(
       reason: closure.abandonment_reason,
       followUpRequired: closure.follow_up_required,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/assistant/tasks/:taskId/advice
+ *
+ * When a step fails, the desktop calls this to get an AI-generated plain-
+ * English explanation of what went wrong and what the user should do next.
+ */
+export async function getFailureAdvice(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const clerkUserId = await assistantUserId(req);
+    if (!clerkUserId) {
+      res.status(401).json({ success: false, message: "Missing assistant user id" });
+      return;
+    }
+
+    const { errorMessage, errorKind, tool, transcript } = req.body as {
+      errorMessage?: string;
+      errorKind?: string;
+      tool?: string;
+      transcript?: string;
+    };
+
+    if (!errorMessage) {
+      res.status(400).json({ success: false, message: "errorMessage is required" });
+      return;
+    }
+
+    const isAuth = errorKind === "auth" || errorKind === "not_connected";
+    const isTransient = errorKind === "transient";
+
+    let advice = errorMessage;
+    let suggestion = isAuth
+      ? "Reconnect the integration in the dashboard"
+      : isTransient
+        ? "Try again in a moment"
+        : "Skip this step or try again";
+
+    if (env.OPENAI_API_KEY) {
+      try {
+        const OpenAIModule = await import("openai");
+        const openai = new OpenAIModule.default({ apiKey: env.OPENAI_API_KEY });
+        const prompt = `A step in a voice assistant failed. Give ONE short sentence explanation (max 12 words) the user understands, and a suggestion.
+Tool: ${tool ?? "unknown"} | Error: ${errorMessage} | Kind: ${errorKind ?? "unknown"} | Request: "${transcript ?? ""}"
+Reply JSON: { "explanation": "...", "suggestion": "..." } — both under 12 words.`;
+
+        const resp = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: prompt }],
+        });
+        const parsed = JSON.parse(resp.choices[0]?.message?.content ?? "{}");
+        if (parsed.explanation) advice = parsed.explanation;
+        if (parsed.suggestion) suggestion = parsed.suggestion;
+      } catch {
+        // fall through to defaults
+      }
+    }
+
+    const actions: string[] = [];
+    if (isAuth) actions.push("reconnect");
+    if (isTransient) actions.push("retry");
+    actions.push("skip", "abandon");
+
+    res.json({ success: true, advice, suggestion, actions });
   } catch (err) {
     next(err);
   }

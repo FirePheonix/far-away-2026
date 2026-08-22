@@ -101,11 +101,28 @@ MANDATORY SEQUENCE FOR CALENDAR EVENTS WITH ATTENDEES:
   Step 1. Call confirm_action showing { Title, When, Attendees } preview
   Step 2. Only after confirmed:true → call calendar__create_event
 
+WHEN A TOOL FAILS — call propose_options with 2-4 recovery choices:
+  - Do NOT just give up and reply with text.
+  - Think: what went wrong? What are the alternative paths?
+  - Examples of good options to propose:
+    * Auth failure → "Reconnect [service]" / "Skip this step" / "Try a different approach"
+    * Not found → "Search for it differently" / "Create it instead" / "Skip"
+    * Permission denied → "Reconnect account" / "Skip and continue" / "Stop here"
+  - The user's chosen value comes back as the tool result — use it to decide next action.
+  - If user picks "skip" → continue with remaining steps; if "abandon" → stop.
+
+WHEN YOU ARE DONE — reply with a SPECIFIC summary of what you actually did:
+  - NOT: "Done." or "Task completed."
+  - YES: "Sent email to sparsh@corp.com with subject 'Catch up tomorrow'"
+  - YES: "Listed 3 calendar events for today: Standup at 9am, Lunch at 1pm, Review at 4pm"
+  - YES: "Created doc 'Project Alpha Brief' — https://docs.google.com/..."
+
 BEHAVIOUR:
 - Think step by step. Use results from prior tools directly.
 - NEVER guess or fabricate email addresses. If unknown, call request_user_input.
 - After user provides ANY new fact (email, phone, preference) → immediately call kb_update BEFORE the next action.
-- Only reply with plain text when ALL actions are fully completed.
+- NEVER call request_user_input for read-only actions (list events, search emails, search sheets). Just call the tool.
+- request_user_input is ONLY for data you genuinely cannot proceed without (recipient email, repo name, etc.).
 
 TOOL NAME REFERENCE (use these exact names):
 - Email: gmail__send_email, gmail__search_email, gmail__reply_email
@@ -113,15 +130,18 @@ TOOL NAME REFERENCE (use these exact names):
 - Sheets: sheets__search_sheet, sheets__search_all_sheets, sheets__get_last_row, sheets__append_row
 - Docs: docs__create_document, docs__append_text
 - Meet: meet__create_link
-- Obsidian: obsidian__search_notes, obsidian__append_to_note, obsidian__write_daily_note
 - Slack: slack_send_message  |  GitHub: github_create_issue  |  Notion: notion_create_page
-- Ask user: request_user_input  |  Store fact: kb_update  |  Confirm action: confirm_action
+- Obsidian: obsidian__search_notes, obsidian__append_to_note, obsidian__write_daily_note
+- Ask user: request_user_input  |  Store fact: kb_update
+- Confirm before destructive actions: confirm_action
+- Surface choices on failure/ambiguity: propose_options
 
 HARD RULES:
-1. NEVER send email without calling confirm_action first — not even if you know the address.
-2. NEVER use @example.com, test@, placeholder@. Call request_user_input if unsure.
-3. ALWAYS call kb_update immediately after request_user_input resolves with a new fact.
-4. Do not repeat a step that already succeeded — tool results in this conversation are real.
+1. NEVER send email without confirm_action first.
+2. NEVER fabricate emails. Use request_user_input if unknown.
+3. ALWAYS kb_update after learning a new fact.
+4. On tool failure → call propose_options, NOT just give up.
+5. End with a specific summary of what was done, not "Done."
 
 ${memoryContext ? `${memoryContext}` : ""}`.trim();
 }
@@ -233,10 +253,13 @@ export async function runOrchestrator(
         continue;
       }
 
-      // ── Pause tools: request_user_input, confirm_action ──────────────────
-      // These don't execute synchronously — they create a pending_tasks row
-      // and the workflow waits for the user to respond before continuing.
-      if (toolName === "request_user_input" || toolName === "confirm_action") {
+      // ── Pause tools: request_user_input, confirm_action, propose_options ──
+      // These create a pending_tasks row and the workflow waits for the user.
+      if (
+        toolName === "request_user_input" ||
+        toolName === "confirm_action" ||
+        toolName === "propose_options"
+      ) {
         const started = Date.now();
         let taskId: string | undefined;
         let errorMsg: string | undefined;

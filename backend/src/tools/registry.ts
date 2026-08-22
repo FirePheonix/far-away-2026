@@ -20,6 +20,7 @@ import { pendingTaskTool } from "./pending-task.tool.js";
 import { obsidianTools } from "./obsidian.tool.js";
 import { kbUpdateTool } from "./kb-update.tool.js";
 import { confirmActionTool } from "./confirm-action.tool.js";
+import { proposeOptionsTool } from "./propose-options.tool.js";
 import type { AnyToolDefinition, ToolMetadata } from "./types.js";
 import { createExecutionContext } from "../utils/context.js";
 
@@ -36,6 +37,7 @@ const allTools: AnyToolDefinition[] = [
   pendingTaskTool,
   kbUpdateTool,
   confirmActionTool,
+  proposeOptionsTool,
 ];
 
 export const toolRegistry = Object.fromEntries(

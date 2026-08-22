@@ -24,7 +24,8 @@ export type ToolName =
   | "obsidian.write_daily_note"
   | "request_user_input"
   | "kb_update"
-  | "confirm_action";
+  | "confirm_action"
+  | "propose_options";
 
 export interface PlannedAction {
   tool: ToolName;

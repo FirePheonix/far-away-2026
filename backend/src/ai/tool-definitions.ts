@@ -533,4 +533,42 @@ export const OPENAI_TOOL_DEFINITIONS: FunctionDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "propose_options",
+      description:
+        "When a tool fails or you hit an ambiguity with multiple recovery paths, " +
+        "call this to surface 2-4 concrete next-step choices to the user. " +
+        "The user picks one; you receive their choice and act on it. " +
+        "Use this instead of silently failing or giving up. " +
+        "Examples: calendar auth failure → offer 'Reconnect Google' / 'Skip calendar step'; " +
+        "ambiguous request → offer different interpretations.",
+      parameters: {
+        type: "object",
+        properties: {
+          situation: {
+            type: "string",
+            description: "One sentence: what happened and why you need their input.",
+          },
+          options: {
+            type: "array",
+            description: "2-4 choices for the user.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Short button text. Max 4 words." },
+                description: { type: "string", description: "One sentence: what you will do." },
+                value: { type: "string", description: "Opaque key you read back on resume." },
+              },
+              required: ["label", "description", "value"],
+            },
+            minItems: 2,
+            maxItems: 4,
+          },
+        },
+        required: ["situation", "options"],
+      },
+    },
+  },
 ];
