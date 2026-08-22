@@ -26,8 +26,10 @@ use crate::overlay::PILL_H;
 /// for single-instance detection. Unlike a TCP port it cannot be squatted by an
 /// unprivileged process on another user session, and it is automatically released
 /// when the process exits (no TIME_WAIT residual).
+#[cfg(windows)]
 struct InstanceLock(windows::Win32::Foundation::HANDLE);
 
+#[cfg(windows)]
 impl Drop for InstanceLock {
     fn drop(&mut self) {
         // SAFETY: handle was returned by CreateMutexW and is valid.
@@ -36,6 +38,7 @@ impl Drop for InstanceLock {
     }
 }
 
+#[cfg(windows)]
 fn acquire_instance_lock() -> Result<InstanceLock> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
@@ -64,6 +67,14 @@ fn acquire_instance_lock() -> Result<InstanceLock> {
     Ok(InstanceLock(handle))
 }
 
+#[cfg(not(windows))]
+struct InstanceLock;
+
+#[cfg(not(windows))]
+fn acquire_instance_lock() -> Result<InstanceLock> {
+    Ok(InstanceLock)
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -88,6 +99,16 @@ fn main() -> Result<()> {
 
     // Keep the window "visible" to the OS (parked off-screen when idle).
     // Starting fully hidden stops the egui loop on Windows, so hotkeys never fire.
+    // Load window icon
+    let icon_bytes = include_bytes!("../assets/icon.png");
+    let image = image::load_from_memory(icon_bytes).expect("Failed to load icon").into_rgba8();
+    let (icon_width, icon_height) = image.dimensions();
+    let icon_data = std::sync::Arc::new(egui::IconData {
+        rgba: image.into_raw(),
+        width: icon_width,
+        height: icon_height,
+    });
+
     let viewport = egui::ViewportBuilder::default()
         .with_title("local-stt")
         .with_inner_size([1920.0, PILL_H])  // will be resized to actual screen width on first frame
@@ -97,7 +118,8 @@ fn main() -> Result<()> {
         .with_always_on_top()
         .with_taskbar(false)
         .with_resizable(true)
-        .with_visible(true);
+        .with_visible(true)
+        .with_icon(icon_data);
 
     let native_options = eframe::NativeOptions {
         viewport,

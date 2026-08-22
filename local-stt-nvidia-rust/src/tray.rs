@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::util::make_mic_icon;
+
 
 pub struct Tray {
     _icon: TrayIcon,
@@ -13,9 +13,10 @@ pub struct Tray {
 
 impl Tray {
     pub fn new() -> Result<Self> {
-        let rgba = make_mic_icon(64, [0x1B, 0xB9, 0xCE]);
-        let (w, h) = (rgba.width(), rgba.height());
-        let icon = Icon::from_rgba(rgba.into_raw(), w, h).context("tray icon from rgba")?;
+        let icon_bytes = include_bytes!("../assets/icon.png");
+        let image = image::load_from_memory(icon_bytes).context("Failed to load tray icon")?.into_rgba8();
+        let (w, h) = image.dimensions();
+        let icon = Icon::from_rgba(image.into_raw(), w, h).context("tray icon from rgba")?;
 
         let quit = MenuItem::new("Quit", true, None);
         let quit_id = quit.id().clone();
