@@ -24,7 +24,8 @@ export const toolNameSchema = z.enum([
   "obsidian.search_notes",
   "obsidian.append_to_note",
   "obsidian.write_daily_note",
-  "request_user_input"
+  "request_user_input",
+  "kb_update"
 ]);
 
 export const plannedActionSchema = z.object({

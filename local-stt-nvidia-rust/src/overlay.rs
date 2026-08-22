@@ -8,6 +8,19 @@
 use crate::api::{PendingTask, ReasonChip, Trace};
 use egui::{self, Color32, CornerRadius, Pos2, Rect, RichText, Sense, Shape, Stroke, Vec2};
 
+/// A completed run entry kept in the session history sidebar.
+#[derive(Debug, Clone)]
+pub struct SessionEntry {
+    /// Short first ~60 chars of the transcript.
+    pub transcript: String,
+    /// "completed" | "failed" | "abandoned"
+    pub status: String,
+    /// Human-readable summary or error.
+    pub message: String,
+    /// How many steps ran.
+    pub steps: usize,
+}
+
 /// Collapsed notch height (logical px), not counting the top-edge flares.
 pub const PILL_H: f32 = 56.0;
 /// Notch width when idle / listening.
@@ -179,6 +192,9 @@ pub struct Overlay {
     pub max_scroll_h: f32,
     /// Reason vocabulary from the backend, with a usable local fallback.
     pub reason_chips: Vec<ReasonChip>,
+    /// Completed/failed/abandoned runs from this session, newest-first.
+    /// Shown in a compact right-side panel so the user can see what already ran.
+    pub session_history: Vec<SessionEntry>,
     dismiss_at: Option<f64>,
     phase: f32,
 }
@@ -192,6 +208,7 @@ impl Default for Overlay {
             screen_w: 1920.0,
             max_scroll_h: 160.0,
             reason_chips: default_reason_chips(),
+            session_history: Vec::new(),
             dismiss_at: None,
             phase: 0.0,
         }
@@ -397,6 +414,12 @@ impl Overlay {
         self.state = OverlayState::Hidden;
         self.dismiss_at = None;
     }
+
+    /// Record a settled run into the session history sidebar (newest-first, cap 20).
+    pub fn push_session_entry(&mut self, entry: SessionEntry) {
+        self.session_history.insert(0, entry);
+        self.session_history.truncate(20);
+    }
     /// Auto-hide after a delay. Used once a run reaches a terminal state.
     pub fn arm_dismiss(&mut self, now: f64, secs: f64) {
         self.dismiss_at = Some(now + secs);
@@ -597,6 +620,10 @@ impl Overlay {
                 action = OverlayAction::OpenPairUrl { url };
             }
         }
+
+        // Right-side session history panel — always drawn when there is history,
+        // independent of the main notch state.
+        self.draw_session_panel(ui, canvas);
 
         if let Some(keyed) = self.handle_keys(ctx) {
             action = keyed;
@@ -1455,6 +1482,123 @@ impl Overlay {
             _ => {
                 p.circle_filled(c, 2.5, MUTED);
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Session history panel — a compact right-side column that shows every
+    // run completed during this session so the user always knows what happened.
+    //
+    // Layout: a narrow dark pill anchored 12 px from the right edge of the
+    // canvas, top-aligned with the main notch.  Each entry is one row:
+    //   status glyph  ·  short transcript  ·  step count
+    // The panel is only drawn when there is at least one entry and the main
+    // notch is visible (alpha > 0).
+    // -----------------------------------------------------------------------
+    fn draw_session_panel(&self, ui: &mut egui::Ui, canvas: Rect) {
+        if self.session_history.is_empty() {
+            return;
+        }
+        if self.alpha < 0.05 {
+            return;
+        }
+
+        const PANEL_W: f32 = 240.0;
+        const ROW_H:   f32 = 38.0;
+        const PAD_X:   f32 = 12.0;
+        const PAD_Y:   f32 = 8.0;
+        const MARGIN:  f32 = 12.0; // gap from right edge of canvas
+        const MAX_ROWS: usize = 8;
+
+        let visible = self.session_history.len().min(MAX_ROWS);
+        let panel_h = PAD_Y * 2.0 + visible as f32 * ROW_H;
+
+        let panel_x = canvas.max.x - PANEL_W - MARGIN;
+        let panel_y = canvas.min.y + PILL_H + 8.0; // just below the notch chrome
+
+        let panel_rect = Rect::from_min_size(
+            Pos2::new(panel_x, panel_y),
+            Vec2::new(PANEL_W, panel_h),
+        );
+
+        let bg = Color32::from_rgba_unmultiplied(
+            BG.r(), BG.g(), BG.b(),
+            (200.0 * self.alpha) as u8,
+        );
+
+        // Background pill
+        ui.painter().rect_filled(
+            panel_rect,
+            CornerRadius::same(14),
+            bg,
+        );
+
+        // Header label
+        let header_rect = Rect::from_min_size(
+            Pos2::new(panel_x + PAD_X, panel_y + 4.0),
+            Vec2::new(PANEL_W - PAD_X * 2.0, 14.0),
+        );
+        let mut header_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(header_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        header_ui.label(
+            RichText::new(format!("Session  ·  {} run{}", visible, if visible == 1 { "" } else { "s" }))
+                .size(10.0)
+                .color(MUTED),
+        );
+
+        // Rows
+        for (i, entry) in self.session_history.iter().take(MAX_ROWS).enumerate() {
+            let row_y = panel_y + PAD_Y + 14.0 + 2.0 + i as f32 * ROW_H;
+            let row_rect = Rect::from_min_size(
+                Pos2::new(panel_x + PAD_X, row_y),
+                Vec2::new(PANEL_W - PAD_X * 2.0, ROW_H - 4.0),
+            );
+
+            let mut row_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(row_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+
+            // Status glyph + short transcript on first line
+            row_ui.horizontal(|ui| {
+                let (glyph, color) = match entry.status.as_str() {
+                    "completed" => ("✔", GREEN),
+                    "failed"    => ("✖", RED),
+                    "abandoned" => ("—", MUTED),
+                    _           => ("•", MUTED),
+                };
+                ui.label(RichText::new(glyph).size(11.0).color(color).monospace());
+                ui.add_space(4.0);
+
+                // Truncate transcript to fit the panel width
+                let max_chars = 28usize;
+                let t = if entry.transcript.len() > max_chars {
+                    format!("{}…", &entry.transcript[..max_chars])
+                } else {
+                    entry.transcript.clone()
+                };
+                ui.label(RichText::new(t).size(11.5).color(TEXT));
+            });
+
+            // Step count + message on second line
+            row_ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                let sub = if entry.steps > 0 {
+                    format!("{} step{}  ·  {}", entry.steps, if entry.steps == 1 { "" } else { "s" },
+                        if entry.message.len() > 26 {
+                            format!("{}…", &entry.message[..26])
+                        } else {
+                            entry.message.clone()
+                        })
+                } else {
+                    entry.message.clone()
+                };
+                ui.label(RichText::new(sub).size(10.0).color(MUTED));
+            });
         }
     }
 }

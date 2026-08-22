@@ -146,6 +146,28 @@ const TOOL_CATALOG = [
       vaultName: "string (optional — required when user has multiple vaults)",
     },
   },
+  {
+    tool: "request_user_input",
+    description:
+      "Pause and ask the user for missing information you cannot infer (e.g. an email address not in the knowledge base, a repo name, a file path). " +
+      "ONLY use this when the USER KNOWLEDGE BASE section does NOT already contain the needed value. " +
+      "Always follow request_user_input with kb_update to store the answer so it is never asked again.",
+    params: {
+      description: "string — why you need this information",
+      required_fields: "array of { name: string, type: string }",
+    },
+  },
+  {
+    tool: "kb_update",
+    description:
+      "Store or update facts in the user's personal knowledge base. " +
+      "Use this IMMEDIATELY after request_user_input resolves so the same question is never asked twice. " +
+      "Also use it when the user volunteers new information ('my timezone is IST', 'Shubham's email is …'). " +
+      "Facts stored here are injected into every future plan automatically.",
+    params: {
+      facts: "array of { subject, key, value, kind?, aliases?, source?, confidence?, notes? }",
+    },
+  },
 ] as const;
 
 export function buildPlannerSystemPrompt(): string {
@@ -183,6 +205,13 @@ RULES:
 13. Prefer obsidian.write_daily_note for logging, journaling, or recording meeting notes in Obsidian.
 14. Use obsidian.search_notes before obsidian.append_to_note when the user refers to a note by name but you do not know the exact file path.
 15. For Obsidian tools: if the user has multiple vaults and you are unsure which vault to use, call request_user_input first to ask for the vault name. If only one vault exists, omit vaultName.
+16. KNOWLEDGE BASE RULES — read the USER KNOWLEDGE BASE section in the user prompt before planning:
+    a. If a needed value (email, phone, slack id, etc.) is listed there, use it directly. NEVER call request_user_input for something already in the knowledge base.
+    b. If a needed value is NOT in the knowledge base AND you cannot infer it, call request_user_input to ask the user.
+    c. ALWAYS follow a request_user_input step with a kb_update step that stores the answer. This teaches the assistant so it never asks the same question again.
+    d. When the user volunteers new facts mid-request ("my timezone is IST", "call Priya's number 9876543210"), emit a kb_update step to store them even if no request_user_input was needed.
+    e. Use kind="contact" for people, kind="preference" for user settings/defaults, kind="credential" for logins/handles, kind="fact" for everything else.
+    f. Populate aliases with every alternative name the user might say (e.g. ["Shubh", "Shubham Verma"] for subject="Shubham").
 
 AVAILABLE TOOLS:
 ${JSON.stringify(TOOL_CATALOG, null, 2)}
