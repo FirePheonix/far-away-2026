@@ -50,9 +50,10 @@ const Footer = () => {
 
           <div className="w-48 h-48 md:w-64 md:h-64 relative">
             <Image
-              src="/footer-logo-image.jpg"
+              src="/footer-logo-image.png"
               alt="Clawvio Flower"
               fill
+              sizes="(max-width: 768px) 100vw, 50vw"
               draggable={false}
               className="object-cover mix-blend-multiply opacity-80"
             />
@@ -137,7 +138,9 @@ const Footer = () => {
             <span className="text-sm text-brand-text/40 cursor-default">
               Instagram
             </span>
-            <span className="text-sm text-brand-text/40 cursor-default">Meta</span>
+            <span className="text-sm text-brand-text/40 cursor-default">
+              Meta
+            </span>
           </div>
 
           <div className="flex flex-col gap-4">
@@ -181,4 +184,3 @@ const Footer = () => {
 };
 
 export default Footer;
-

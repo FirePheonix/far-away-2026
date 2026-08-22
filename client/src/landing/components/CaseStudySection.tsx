@@ -80,6 +80,7 @@ const CaseStudySection = () => {
                 width={400}
                 height={400}
                 draggable={false}
+                style={{ width: 'auto', height: 'auto' }}
                 className="translate-y-4 object-contain"
               />
             </div>
