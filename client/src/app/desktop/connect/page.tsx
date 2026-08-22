@@ -1,27 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useAuth, SignInButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001/api";
 
-export default function DesktopConnectPage() {
+function DesktopConnectInner() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
+  const searchParams = useSearchParams();
+  const pairingId = searchParams.get("pairingId") ?? "";
+  const code = searchParams.get("code") ?? "";
   const [status, setStatus] = useState<"idle" | "claiming" | "claimed" | "error">("idle");
   const [message, setMessage] = useState("Approve this desktop app to use your Clawvio workspace.");
 
-  const params = useMemo(() => {
-    if (typeof window === "undefined") return { pairingId: "", code: "" };
-    const search = new URLSearchParams(window.location.search);
-    return {
-      pairingId: search.get("pairingId") ?? "",
-      code: search.get("code") ?? "",
-    };
-  }, []);
-
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !params.pairingId || !params.code) return;
+    if (!isLoaded || !isSignedIn || !pairingId || !code) return;
+    let cancelled = false;
 
     async function claim() {
       setStatus("claiming");
@@ -30,13 +26,13 @@ export default function DesktopConnectPage() {
         const token = await getToken();
         if (!token) throw new Error("Missing Clerk session token");
 
-        const response = await fetch(`${API_URL}/desktop/pairings/${params.pairingId}/claim`, {
+        const response = await fetch(`${API_URL}/desktop/pairings/${pairingId}/claim`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ code: params.code }),
+          body: JSON.stringify({ code }),
         });
 
         if (!response.ok) {
@@ -44,18 +40,25 @@ export default function DesktopConnectPage() {
           throw new Error(body?.message ?? `Pairing failed (${response.status})`);
         }
 
-        setStatus("claimed");
-        setMessage("Desktop connected. You can return to the Clawvio speech bar.");
+        if (!cancelled) {
+          setStatus("claimed");
+          setMessage("Desktop connected. You can return to the Clawvio speech bar.");
+        }
       } catch (err) {
-        setStatus("error");
-        setMessage(err instanceof Error ? err.message : "Desktop pairing failed");
+        if (!cancelled) {
+          setStatus("error");
+          setMessage(err instanceof Error ? err.message : "Desktop pairing failed");
+        }
       }
     }
 
     void claim();
-  }, [getToken, isLoaded, isSignedIn, params.code, params.pairingId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, isLoaded, isSignedIn, pairingId, code]);
 
-  const missingParams = !params.pairingId || !params.code;
+  const missingParams = !pairingId || !code;
 
   return (
     <main className="min-h-screen bg-brand-bg text-brand-dark">
@@ -70,14 +73,14 @@ export default function DesktopConnectPage() {
           <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em]">
             Connect the speech bar to your account.
           </h1>
-          <p className="mt-4 text-brand-text/70">{missingParams ? "Missing pairing code." : message}</p>
+          <p className="mt-4 text-brand-text/70">
+            {missingParams ? "Missing pairing code. Open the link from the desktop notch." : message}
+          </p>
 
           {!missingParams && (
             <div className="mt-6 rounded-lg bg-[#f5f3ef] p-4">
               <p className="text-xs text-brand-text/60">Pairing code</p>
-              <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.2em]">
-                {params.code}
-              </p>
+              <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.2em]">{code}</p>
             </div>
           )}
 
@@ -108,5 +111,19 @@ export default function DesktopConnectPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function DesktopConnectPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-brand-bg px-6 py-12 text-brand-dark">
+          <p className="text-brand-text/70">Loading pairing…</p>
+        </main>
+      }
+    >
+      <DesktopConnectInner />
+    </Suspense>
   );
 }

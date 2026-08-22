@@ -55,7 +55,7 @@ export const assistantWorkflow = inngest.createFunction(
 
     try {
       const plan = await step.run("planner", async () => {
-        return createPlan(transcript);
+        return createPlan(transcript, { clerkUserId });
       });
 
       const stepsExecuted: StepExecutionRecord[] = [];
@@ -246,7 +246,7 @@ export async function runAssistantPipeline(
   message: string;
 }> {
   const runId = await startAssistantRun(options.requestId);
-  const plan = await createPlan(transcript);
+  const plan = await createPlan(transcript, { clerkUserId: options.clerkUserId });
   const context = createExecutionContext(plan.actions.length, options);
   const stepsExecuted: StepExecutionRecord[] = [];
 

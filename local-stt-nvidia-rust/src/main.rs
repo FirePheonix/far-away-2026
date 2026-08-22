@@ -4,6 +4,7 @@
 // Debug (`cargo run`) still attaches to the terminal for logs.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api;
 mod app;
 mod asr;
 mod audio;

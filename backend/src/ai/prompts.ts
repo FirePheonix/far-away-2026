@@ -212,7 +212,11 @@ export const PLANNER_EXAMPLES = [
   },
 ] as const;
 
-export function buildPlannerUserPrompt(transcript: string): string {
+export function buildPlannerUserPrompt(transcript: string, memoryContext?: string): string {
   const now = new Date().toISOString();
-  return `Current time: ${now}\n\nUser request:\n"${transcript}"\n\nReturn the JSON plan.`;
+  const memory = memoryContext
+    ? `\n\nLONG-TERM MEMORY\nThis is what you already know about this user from earlier sessions. Use it to fill in details the user did not repeat (for example an email address you have seen before) instead of calling request_user_input.\n\n${memoryContext}`
+    : "";
+
+  return `Current time: ${now}${memory}\n\nUser request:\n"${transcript}"\n\nReturn the JSON plan.`;
 }

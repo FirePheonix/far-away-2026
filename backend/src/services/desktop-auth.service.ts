@@ -17,6 +17,18 @@ function makeDesktopToken(): string {
   return `cvio_dt_${randomBytes(32).toString("base64url")}`;
 }
 
+/** SQLite `datetime('now')` is UTC without a timezone. `new Date(s)` would treat it as local. */
+function sqliteUtcExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) return true;
+  const raw = String(expiresAt).trim();
+  const iso = /[zZ]|[+-]\d{2}:\d{2}$/.test(raw)
+    ? raw.replace(" ", "T")
+    : `${raw.replace(" ", "T")}Z`;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return true;
+  return ms < Date.now();
+}
+
 function frontendUrl(path: string): string {
   const base = env.FRONTEND_URL ?? env.CORS_ORIGIN;
   return `${base.replace(/\/$/, "")}${path}`;
@@ -75,7 +87,7 @@ export async function claimDesktopPairing(params: {
   if (!pairing || pairing.code !== params.code) {
     throw new AppError("Invalid desktop pairing code", 404, "PAIRING_NOT_FOUND");
   }
-  if (pairing.status !== "pending" || new Date(pairing.expires_at).getTime() < Date.now()) {
+  if (pairing.status !== "pending" || sqliteUtcExpired(pairing.expires_at)) {
     throw new AppError("Desktop pairing expired", 410, "PAIRING_EXPIRED");
   }
 
@@ -120,7 +132,7 @@ export async function getDesktopPairingStatus(pairingId: string): Promise<{
     throw new AppError("Desktop pairing not found", 404, "PAIRING_NOT_FOUND");
   }
 
-  if (data.status === "pending" && new Date(data.expires_at).getTime() < Date.now()) {
+  if (data.status === "pending" && sqliteUtcExpired(data.expires_at)) {
     db.prepare(`UPDATE desktop_pairings SET status = 'expired' WHERE id = ?`).run(pairingId);
     return { status: "expired" };
   }

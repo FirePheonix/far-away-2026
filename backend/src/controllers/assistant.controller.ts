@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { assistantRequestSchema } from "../ai/schemas.js";
 import { env } from "../config/env.js";
-import { db } from "../config/db.js";
+import { supabaseAdmin } from "../config/supabase.js";
 import { createAssistantRequest } from "../services/assistant-runs.service.js";
 import { resolveDesktopToken } from "../services/desktop-auth.service.js";
 import { inngest, ASSISTANT_EVENTS } from "../workflows/inngest.js";
@@ -111,39 +111,29 @@ export async function getAssistantRequestStatus(
     }
 
     const requestId = req.params.requestId;
-    let request;
-    try {
-      request = db.prepare(`
-        SELECT id, transcript, status, created_at
-        FROM assistant_requests
-        WHERE id = ? AND clerk_user_id = ?
-      `).get(requestId, clerkUserId) as any;
-    } catch (requestError) {
-      throw requestError;
-    }
+    const { data: request, error: requestError } = await supabaseAdmin
+      .from("assistant_requests")
+      .select("id, transcript, status, created_at")
+      .eq("id", requestId)
+      .eq("clerk_user_id", clerkUserId)
+      .maybeSingle();
+
+    if (requestError) throw new Error(requestError.message);
 
     if (!request) {
       res.status(404).json({ success: false, message: "Assistant request not found" });
       return;
     }
 
-    let run;
-    try {
-      run = db.prepare(`
-        SELECT id, success, message, started_at, finished_at
-        FROM assistant_runs
-        WHERE request_id = ?
-        ORDER BY started_at DESC
-        LIMIT 1
-      `).get(request.id) as any;
-      
-      // SQLite stores boolean as 1 or 0, map to boolean if present
-      if (run && run.success !== null) {
-        run.success = run.success === 1;
-      }
-    } catch (runError) {
-      throw runError;
-    }
+    const { data: run, error: runError } = await supabaseAdmin
+      .from("assistant_runs")
+      .select("id, success, message, started_at, finished_at")
+      .eq("request_id", request.id)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (runError) throw new Error(runError.message);
 
     res.json({
       success: true,
@@ -185,17 +175,16 @@ export async function getPendingTasks(
       return;
     }
 
-    const tasks = db.prepare(`
-      SELECT id, description, required_fields, status, created_at, updated_at
-      FROM pending_tasks
-      WHERE clerk_user_id = ? AND status = 'pending'
-      ORDER BY created_at DESC
-    `).all(clerkUserId);
+    const { data: tasks, error } = await supabaseAdmin
+      .from("pending_tasks")
+      .select("id, description, required_fields, status, created_at, updated_at")
+      .eq("clerk_user_id", clerkUserId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
 
-    res.json({ success: true, tasks: tasks.map((t: any) => ({
-      ...t,
-      required_fields: JSON.parse(t.required_fields)
-    })) });
+    if (error) throw new Error(error.message);
+
+    res.json({ success: true, tasks: tasks ?? [] });
   } catch (err) {
     next(err);
   }
@@ -218,9 +207,14 @@ async function resolvePendingTaskRow(
     }
 
     const taskId = req.params.taskId;
-    const task = db
-      .prepare(`SELECT id, status, run_id FROM pending_tasks WHERE id = ? AND clerk_user_id = ?`)
-      .get(taskId, clerkUserId) as any;
+    const { data: task, error } = await supabaseAdmin
+      .from("pending_tasks")
+      .select("id, status, run_id")
+      .eq("id", taskId)
+      .eq("clerk_user_id", clerkUserId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
 
     if (!task) {
       res.status(404).json({ success: false, message: "Task not found" });
@@ -246,11 +240,14 @@ export async function submitPendingTask(
   await resolvePendingTaskRow(req, res, next, async (task) => {
     const payload = req.body;
 
-    db.prepare(`
-      UPDATE pending_tasks
-      SET status = 'resolved', resolved_data = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(payload), task.id);
+    await supabaseAdmin
+      .from("pending_tasks")
+      .update({
+        status: "resolved",
+        resolved_data: payload,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", task.id);
 
     await inngest.send({
       name: ASSISTANT_EVENTS.userInputReceived,
@@ -276,11 +273,14 @@ export async function skipPendingTask(
   await resolvePendingTaskRow(req, res, next, async (task) => {
     const reason: string = req.body?.reason ?? "Skipped by user";
 
-    db.prepare(`
-      UPDATE pending_tasks
-      SET status = 'skipped', abandonment_reason = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(reason, task.id);
+    await supabaseAdmin
+      .from("pending_tasks")
+      .update({
+        status: "skipped",
+        abandonment_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", task.id);
 
     await inngest.send({
       name: ASSISTANT_EVENTS.taskSkipped,
@@ -306,11 +306,14 @@ export async function abandonPendingTask(
   await resolvePendingTaskRow(req, res, next, async (task) => {
     const reason: string = req.body?.reason ?? "Abandoned by user";
 
-    db.prepare(`
-      UPDATE pending_tasks
-      SET status = 'abandoned', abandonment_reason = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(reason, task.id);
+    await supabaseAdmin
+      .from("pending_tasks")
+      .update({
+        status: "abandoned",
+        abandonment_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", task.id);
 
     await inngest.send({
       name: ASSISTANT_EVENTS.taskAbandoned,
@@ -344,11 +347,14 @@ export async function editPendingTask(
       return;
     }
 
-    db.prepare(`
-      UPDATE pending_tasks
-      SET status = 'resolved', resolved_data = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(payload), task.id);
+    await supabaseAdmin
+      .from("pending_tasks")
+      .update({
+        status: "resolved",
+        resolved_data: payload,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", task.id);
 
     await inngest.send({
       name: ASSISTANT_EVENTS.taskEdited,
@@ -388,29 +394,36 @@ export async function abandonAssistantRunHandler(
       return;
     }
 
-    // Verify ownership via the assistant_requests table
-    const run = db
-      .prepare(
-        `SELECT ar.id AS run_id, ar.request_id
-         FROM assistant_runs ar
-         JOIN assistant_requests req ON req.id = ar.request_id
-         WHERE ar.id = ? AND req.clerk_user_id = ?`,
-      )
-      .get(runId, clerkUserId) as any;
+    // Verify ownership by embedding the parent request
+    const { data: run, error: runLookupError } = await supabaseAdmin
+      .from("assistant_runs")
+      .select("id, request_id, assistant_requests!inner(clerk_user_id)")
+      .eq("id", runId)
+      .eq("assistant_requests.clerk_user_id", clerkUserId)
+      .maybeSingle();
+
+    if (runLookupError) throw new Error(runLookupError.message);
 
     if (!run) {
       res.status(404).json({ success: false, message: "Run not found" });
       return;
     }
 
-    // Update DB immediately (cancelOn may take a moment to propagate)
-    db.prepare(`
-      UPDATE assistant_runs
-      SET success = 0, message = ?, abandonment_reason = ?, finished_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(`Abandoned: ${reason}`, reason, runId);
+    // Update immediately (cancelOn may take a moment to propagate)
+    await supabaseAdmin
+      .from("assistant_runs")
+      .update({
+        success: false,
+        message: `Abandoned: ${reason}`,
+        abandonment_reason: reason,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
 
-    db.prepare(`UPDATE assistant_requests SET status = 'abandoned' WHERE id = ?`).run(requestId);
+    await supabaseAdmin
+      .from("assistant_requests")
+      .update({ status: "abandoned" })
+      .eq("id", requestId);
 
     // Fire the cancelOn event — Inngest will kill the workflow
     await inngest.send({

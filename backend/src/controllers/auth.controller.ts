@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
 import { db } from "../config/db.js";
+import { supabaseAdmin } from "../config/supabase.js";
 import { encryptSecret } from "../utils/crypto.js";
 import {
   buildGoogleAuthUrl,
@@ -28,14 +29,17 @@ function requireUserId(req: Request): string {
 }
 
 async function ensureProfile(clerkUserId: string, email?: string): Promise<void> {
-  try {
-    db.prepare(`
-      INSERT INTO profiles (clerk_user_id, email)
-      VALUES (@clerkUserId, @email)
-      ON CONFLICT(clerk_user_id) DO UPDATE SET 
-        email = COALESCE(@email, profiles.email)
-    `).run({ clerkUserId, email: email ?? null });
-  } catch (error) {
+  // Without an email this must not clobber a previously stored one, so the
+  // no-email case is insert-only rather than an overwriting upsert.
+  const { error } = email
+    ? await supabaseAdmin
+        .from("profiles")
+        .upsert({ clerk_user_id: clerkUserId, email }, { onConflict: "clerk_user_id" })
+    : await supabaseAdmin
+        .from("profiles")
+        .upsert({ clerk_user_id: clerkUserId }, { onConflict: "clerk_user_id", ignoreDuplicates: true });
+
+  if (error) {
     throw new AppError("Failed to upsert profile", 500, "DB_ERROR", error);
   }
 }
@@ -45,6 +49,7 @@ function appRedirect(path = "/dashboard"): string {
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
+/** Credentials stay in local SQLite — this one is deliberately not on Supabase. */
 async function loadActiveGoogleConnection(userId: string): Promise<GoogleConnectionRow | null> {
   try {
     const data = db.prepare(`
@@ -145,20 +150,63 @@ export async function getDashboardSummary(
     const userId = requireUserId(req);
     await ensureProfile(userId);
 
-    const profile = db.prepare(`SELECT email, full_name, avatar_url FROM profiles WHERE clerk_user_id = ?`).get(userId) as any;
     const googleConnection = await loadActiveGoogleConnection(userId);
-    
-    const requests = db.prepare(`SELECT id, transcript, status, created_at FROM assistant_requests WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 30`).all(userId) as any[];
-    const contacts = db.prepare(`SELECT id, display_name, primary_email, organization, role, notes, created_at FROM contacts WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 8`).all(userId);
-    const memoryItems = db.prepare(`SELECT id, kind, title, body, metadata, created_at FROM memory_items WHERE clerk_user_id = ? ORDER BY created_at DESC LIMIT 8`).all(userId) as any[];
-    const vectorCountResult = db.prepare(`SELECT count(*) as count FROM memory_items WHERE clerk_user_id = ? AND embedding IS NOT NULL`).get(userId) as any;
-    const pendingTasks = db.prepare(`SELECT id, run_id, description, required_fields, status, resolved_data, created_at, updated_at FROM pending_tasks WHERE clerk_user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 20`).all(userId) as any[];
+
+    const [profileRes, requestsRes, contactsRes, memoryRes, vectorCountRes, pendingRes] =
+      await Promise.all([
+        supabaseAdmin
+          .from("profiles")
+          .select("email, full_name, avatar_url")
+          .eq("clerk_user_id", userId)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("assistant_requests")
+          .select("id, transcript, status, created_at")
+          .eq("clerk_user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(30),
+        supabaseAdmin
+          .from("contacts")
+          .select("id, display_name, primary_email, organization, role, notes, created_at")
+          .eq("clerk_user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(8),
+        supabaseAdmin
+          .from("memory_items")
+          .select("id, kind, title, body, metadata, created_at")
+          .eq("clerk_user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(8),
+        supabaseAdmin
+          .from("memory_items")
+          .select("id", { count: "exact", head: true })
+          .eq("clerk_user_id", userId)
+          .not("embedding", "is", null),
+        supabaseAdmin
+          .from("pending_tasks")
+          .select("id, run_id, description, required_fields, status, resolved_data, created_at, updated_at")
+          .eq("clerk_user_id", userId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: false })
+          .limit(20),
+      ]);
+
+    const profile = profileRes.data;
+    const requests = requestsRes.data ?? [];
+    const contacts = contactsRes.data ?? [];
+    const memoryItems = memoryRes.data ?? [];
+    const pendingTasks = pendingRes.data ?? [];
 
     const requestIds = requests.map((r) => r.id);
     let runs: any[] = [];
     if (requestIds.length > 0) {
-      const placeholders = requestIds.map(() => '?').join(',');
-      runs = db.prepare(`SELECT id, request_id, success, message, started_at, finished_at FROM assistant_runs WHERE request_id IN (${placeholders}) ORDER BY started_at DESC LIMIT 30`).all(...requestIds);
+      const { data } = await supabaseAdmin
+        .from("assistant_runs")
+        .select("id, request_id, success, message, started_at, finished_at")
+        .in("request_id", requestIds)
+        .order("started_at", { ascending: false })
+        .limit(30);
+      runs = data ?? [];
     }
 
     const requestById = new Map(requests.map((request) => [request.id, request]));
@@ -174,7 +222,7 @@ export async function getDashboardSummary(
           id: run.id,
           transcript: request.transcript,
           requestStatus: request.status,
-          success: run.success === 1 ? true : run.success === 0 ? false : null,
+          success: run.success ?? null,
           message: run.message,
           startedAt: run.started_at,
           finishedAt: run.finished_at,
@@ -208,17 +256,13 @@ export async function getDashboardSummary(
       },
       apps,
       recentRuns,
-      pendingTasks: pendingTasks.map(t => ({
-        ...t,
-        required_fields: JSON.parse(t.required_fields),
-        resolved_data: t.resolved_data ? JSON.parse(t.resolved_data) : null,
-      })),
-      contacts: contacts ?? [],
-      memoryItems: memoryItems.map(m => ({...m, metadata: m.metadata ? JSON.parse(m.metadata) : null})) ?? [],
+      pendingTasks,
+      contacts,
+      memoryItems,
       dataStats: {
-        contacts: contacts?.length ?? 0,
-        memories: memoryItems?.length ?? 0,
-        vectorReady: vectorCountResult?.count ?? 0,
+        contacts: contacts.length,
+        memories: memoryItems.length,
+        vectorReady: vectorCountRes.count ?? 0,
       },
     });
   } catch (err) {

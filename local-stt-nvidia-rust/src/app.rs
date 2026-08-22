@@ -18,12 +18,16 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
+use crate::api;
 use crate::asr::AsrEngine;
 use crate::audio::Recorder;
 use crate::config;
 use crate::hotkey::{HotkeyKind, Hotkeys, UiWake};
-use crate::overlay::{Overlay, OverlayState, RecordMode, PILL_H, PILL_H_RESULT_EXTRA};
-use crate::tray::Tray;
+use crate::overlay::{
+    Overlay, OverlayAction, OverlayState, RecordMode, PILL_H, PILL_H_FEEDBACK_EXTRA,
+    PILL_H_RESULT_EXTRA,
+};
+use crate::tray::{Tray, TrayAction};
 use crate::util::SAMPLE_RATE;
 
 /// Decode audio in this many seconds while the user is still talking.
@@ -34,6 +38,11 @@ enum WorkerMsg {
     EngineReady(Result<Arc<AsrEngine>, String>),
     ChunkDone { speaker: String, id: usize, segments: Vec<crate::asr::Segment> },
     CommandSent { ok: bool, message: String },
+    TasksFetched { tasks: Vec<api::PendingTask> },
+    FeedbackDone { ok: bool, message: String },
+    PairingReady { pairing_id: String, code: String, claim_url: String },
+    PairingFailed { message: String },
+    PairingClaimed { token: String },
 }
 
 /// One dictation: chunks decoded live, assembled in order on stop.
@@ -119,6 +128,11 @@ pub struct LocalSttApp {
     /// True while the overlay is visible; flipped to false once we've sent the
     /// one-shot Focus command so we don't steal focus every frame.
     did_focus: bool,
+    last_task_poll: Instant,
+    pairing_id: Option<String>,
+    last_pair_poll: Instant,
+    pairing_started: Option<Instant>,
+    last_opened_claim_url: Option<String>,
 }
 
 impl LocalSttApp {
@@ -159,6 +173,11 @@ impl LocalSttApp {
             last_frame: Instant::now(),
             wake_installed: false,
             did_focus: false,
+            last_task_poll: Instant::now(),
+            pairing_id: None,
+            last_pair_poll: Instant::now(),
+            pairing_started: None,
+            last_opened_claim_url: None,
         })
     }
 
@@ -369,12 +388,28 @@ impl LocalSttApp {
         let cfg = config::load();
         let backend_url = cfg.backend_url.clone();
         let token = cfg.desktop_token.clone();
+        if token.as_ref().map(|t| t.trim().is_empty()).unwrap_or(true) {
+            println!("[local-stt] Command blocked — not paired.");
+            if self.pairing_id.is_none()
+                && !matches!(self.overlay.state, OverlayState::Pairing { .. })
+            {
+                self.start_pairing();
+            } else {
+                self.overlay.show_result(
+                    "Still pairing — sign in in the existing browser tab, or click Open login once.".into(),
+                    false,
+                    self.now(),
+                );
+            }
+            self.update_tray_ready_label();
+            return;
+        }
 
         let tx = self.worker_tx.clone();
         let wake = self.ui_wake.clone();
 
         thread::spawn(move || {
-            let result = send_command_to_backend(&backend_url, token.as_deref(), &transcript);
+            let result = api::send_command(&backend_url, token.as_deref(), &transcript);
             let (ok, message) = match result {
                 Ok(msg) => {
                     log::debug!("[local-stt] Command sent OK: {msg}");
@@ -444,6 +479,63 @@ impl LocalSttApp {
                 WorkerMsg::CommandSent { ok, message } => {
                     self.overlay.show_result(message, ok, self.now());
                     self.update_tray_ready_label();
+                    self.spawn_fetch_tasks();
+                }
+                WorkerMsg::TasksFetched { tasks } => {
+                    self.apply_pending_tasks(tasks);
+                }
+                WorkerMsg::PairingReady {
+                    pairing_id,
+                    code,
+                    claim_url,
+                } => {
+                    self.pairing_id = Some(pairing_id);
+                    self.pairing_started = Some(Instant::now());
+                    if let Ok(mut cb) = Clipboard::new() {
+                        let _ = cb.set_text(&claim_url);
+                    }
+                    if self.last_opened_claim_url.as_deref() != Some(claim_url.as_str()) {
+                        self.last_opened_claim_url = Some(claim_url.clone());
+                        api::open_in_browser(&claim_url);
+                    }
+                    self.overlay.show_pairing(code, claim_url);
+                    self.tray.set_tooltip("local-stt - waiting for pair…");
+                }
+                WorkerMsg::PairingFailed { message } => {
+                    self.pairing_id = None;
+                    self.pairing_started = None;
+                    self.overlay.show_result(
+                        format!("{message}  Use tray → Pair account… once. Do not keep pressing Command."),
+                        false,
+                        self.now(),
+                    );
+                }
+                WorkerMsg::PairingClaimed { token } => {
+                    self.pairing_id = None;
+                    self.pairing_started = None;
+                    self.last_opened_claim_url = None;
+                    let mut cfg = config::load();
+                    cfg.desktop_token = Some(token);
+                    if let Err(e) = config::save(&cfg) {
+                        self.overlay
+                            .show_result(format!("Paired, but could not save token: {e}"), false, self.now());
+                    } else {
+                        self.overlay.show_result(
+                            "Paired. Commands now run as your account.".into(),
+                            true,
+                            self.now(),
+                        );
+                        self.tray.set_tooltip("local-stt - paired");
+                    }
+                }
+                WorkerMsg::FeedbackDone { ok, message } => {
+                    if ok {
+                        self.overlay.set_feedback_busy(true, message);
+                        self.spawn_fetch_tasks();
+                    } else {
+                        self.overlay.set_feedback_busy(false, message);
+                    }
+                    self.update_tray_ready_label();
                 }
             }
         }
@@ -468,7 +560,11 @@ impl LocalSttApp {
             let w = sw_log.max(400.0);
             let max_h = (sh_log - 8.0).max(PILL_H);
             let h = self.overlay.desired_height().min(max_h);
-            self.overlay.max_scroll_h = (PILL_H_RESULT_EXTRA - 80.0).max(60.0);
+            let extra = match self.overlay.state {
+                OverlayState::Feedback { .. } => PILL_H_FEEDBACK_EXTRA,
+                _ => PILL_H_RESULT_EXTRA,
+            };
+            self.overlay.max_scroll_h = (extra - 80.0).max(60.0);
 
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
@@ -512,14 +608,20 @@ impl eframe::App for LocalSttApp {
 
         self.poll_workers();
         self.pump_live_chunks();
+        self.poll_pending_tasks();
 
         if let Some(kind) = self.hotkeys.poll_toggle() {
             self.toggle_record(kind);
         }
-        if self.tray.poll_quit() {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
-            return;
+        match self.tray.poll_action() {
+            TrayAction::Quit => {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+                return;
+            }
+            TrayAction::Pair => self.start_pairing(),
+            TrayAction::None => {}
         }
+        self.poll_pairing();
 
         if self.recording {
             self.overlay.rms = self.recorder.rms();
@@ -541,79 +643,191 @@ impl eframe::App for LocalSttApp {
             .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
             .show(ctx, |ui| {
                 ui.multiply_opacity(self.overlay.alpha);
-                self.overlay.ui(ctx, ui);
+                let action = self.overlay.ui(ctx, ui);
+                self.handle_overlay_action(action);
             });
     }
 }
 
-// ── Backend HTTP call ────────────────────────────────────────────────────────
+impl LocalSttApp {
+    fn recording_busy(&self) -> bool {
+        self.recording
+            || matches!(
+                self.overlay.state,
+                OverlayState::Listening { .. }
+                    | OverlayState::Processing
+                    | OverlayState::Sending
+                    | OverlayState::Pairing { .. }
+            )
+    }
 
-/// POST the transcript as a command to `POST /api/assistant`.
-/// Returns a short human-readable status string on success.
-///
-/// # Security
-/// The `token` is a Bearer credential. We refuse to send it over plain HTTP
-/// to non-loopback hosts to prevent accidental credential exposure.
-fn send_command_to_backend(
-    backend_url: &str,
-    token: Option<&str>,
-    transcript: &str,
-) -> anyhow::Result<String> {
-    use reqwest::blocking::Client;
+    fn poll_pending_tasks(&mut self) {
+        if self.recording_busy() {
+            return;
+        }
+        if self.last_task_poll.elapsed().as_secs() < 4 {
+            return;
+        }
+        self.last_task_poll = Instant::now();
+        self.spawn_fetch_tasks();
+    }
 
-    // Validate scheme before attaching credentials.
-    let parsed = backend_url
-        .parse::<reqwest::Url>()
-        .map_err(|e| anyhow::anyhow!("invalid backend_url: {e}"))?;
+    fn spawn_fetch_tasks(&self) {
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        thread::spawn(move || {
+            match api::fetch_pending_tasks(&backend_url, token.as_deref()) {
+                Ok(tasks) => {
+                    let _ = tx.send(WorkerMsg::TasksFetched { tasks });
+                }
+                Err(e) => {
+                    log::debug!("[local-stt] pending task poll: {e}");
+                }
+            }
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
+    }
 
-    let scheme = parsed.scheme();
-    let host = parsed.host_str().unwrap_or("");
-    let is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+    fn apply_pending_tasks(&mut self, tasks: Vec<api::PendingTask>) {
+        if self.recording_busy() {
+            return;
+        }
+        if matches!(self.overlay.state, OverlayState::Pairing { .. }) {
+            return;
+        }
+        if tasks.is_empty() {
+            if matches!(self.overlay.state, OverlayState::Feedback { .. }) {
+                self.overlay.show_result("Caught up — no pending tasks".into(), true, self.now());
+            }
+            return;
+        }
+        let n = tasks.len();
+        self.overlay.show_feedback(tasks);
+        self.tray
+            .set_tooltip(&format!("local-stt - {n} task(s) need you"));
+    }
 
-    if scheme != "https" && !is_loopback {
-        anyhow::bail!(
-            "backend_url must use https:// for non-localhost hosts (got {scheme}://). \
-             Update backend_url in ~/.local-stt/config.json."
+    fn handle_overlay_action(&mut self, action: OverlayAction) {
+        if let OverlayAction::OpenPairUrl { url } = &action {
+            api::open_in_browser(url);
+            return;
+        }
+        let (kind, task_id, instruction) = match action {
+            OverlayAction::None | OverlayAction::OpenPairUrl { .. } => return,
+            OverlayAction::Skip { task_id } => ("skip", task_id, None),
+            OverlayAction::Abandon { task_id } => ("abandon", task_id, None),
+            OverlayAction::Change {
+                task_id,
+                instruction,
+            } => ("change", task_id, Some(instruction)),
+        };
+        self.overlay.set_feedback_busy(
+            true,
+            match kind {
+                "skip" => "Skipping…",
+                "abandon" => "Abandoning…",
+                _ => "Sending change…",
+            },
         );
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let token = cfg.desktop_token.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        thread::spawn(move || {
+            let result = match kind {
+                "skip" => api::skip_task(&backend_url, token.as_deref(), &task_id)
+                    .map(|_| "Skipped".to_string()),
+                "abandon" => api::abandon_task(&backend_url, token.as_deref(), &task_id)
+                    .map(|_| "Abandoned".to_string()),
+                _ => api::change_task(
+                    &backend_url,
+                    token.as_deref(),
+                    &task_id,
+                    instruction.as_deref().unwrap_or(""),
+                )
+                .map(|_| "Change sent".to_string()),
+            };
+            let (ok, message) = match result {
+                Ok(msg) => (true, msg),
+                Err(e) => (false, format!("{e}")),
+            };
+            let _ = tx.send(WorkerMsg::FeedbackDone { ok, message });
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
     }
 
-    let url = format!("{}/api/assistant", backend_url.trim_end_matches('/'));
-
-    let mut req = Client::new()
-        .post(&url)
-        .header("Content-Type", "application/json");
-
-    if let Some(t) = token {
-        req = req.header("Authorization", format!("Bearer {t}"));
+    fn start_pairing(&mut self) {
+        if self.pairing_id.is_some()
+            || matches!(self.overlay.state, OverlayState::Pairing { .. })
+        {
+            println!("[local-stt] pairing already in progress — not opening another tab");
+            return;
+        }
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        thread::spawn(move || {
+            let msg = match api::start_pairing(&backend_url) {
+                Ok(p) => WorkerMsg::PairingReady {
+                    pairing_id: p.pairing_id,
+                    code: p.code,
+                    claim_url: p.claim_url,
+                },
+                Err(e) => WorkerMsg::PairingFailed {
+                    message: format!("{e}"),
+                },
+            };
+            let _ = tx.send(msg);
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
     }
 
-    let body = serde_json::json!({
-        "transcript": transcript,
-        "source": "local-stt"
-    });
-
-    let resp = req
-        .body(body.to_string())
-        .send()
-        .map_err(|e| anyhow::anyhow!("HTTP send failed: {e}"))?;
-
-    let status = resp.status();
-    let body_text = resp.text().unwrap_or_default();
-
-    if status.is_success() {
-        // Try to extract a human-readable summary from the JSON response.
-        let summary = serde_json::from_str::<serde_json::Value>(&body_text)
-            .ok()
-            .and_then(|v| {
-                v.get("message")
-                    .or_else(|| v.get("status"))
-                    .or_else(|| v.get("result"))
-                    .and_then(|m| m.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| format!("Sent ({status})"));
-        Ok(summary)
-    } else {
-        Err(anyhow::anyhow!("Backend returned {status}"))
+    fn poll_pairing(&mut self) {
+        let Some(pairing_id) = self.pairing_id.clone() else {
+            return;
+        };
+        if self.last_pair_poll.elapsed().as_millis() < 2000 {
+            return;
+        }
+        self.last_pair_poll = Instant::now();
+        let cfg = config::load();
+        let backend_url = cfg.backend_url.clone();
+        let tx = self.worker_tx.clone();
+        let wake = self.ui_wake.clone();
+        let ignore_expiry = self
+            .pairing_started
+            .map(|t| t.elapsed().as_secs() < 8 * 60)
+            .unwrap_or(false);
+        thread::spawn(move || {
+            match api::poll_pairing(&backend_url, &pairing_id) {
+                Ok(Some(token)) => {
+                    let _ = tx.send(WorkerMsg::PairingClaimed { token });
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let msg = format!("{e}");
+                    // SQLite expires_at is UTC; JS parses it as local, so "expired"
+                    // can fire immediately. Ignore that for 8 minutes of wall time.
+                    if msg.contains("expired") && ignore_expiry {
+                        return;
+                    }
+                    let _ = tx.send(WorkerMsg::PairingFailed { message: msg });
+                }
+            }
+            if let Some(ctx) = wake.lock().as_ref() {
+                ctx.request_repaint();
+            }
+        });
     }
 }

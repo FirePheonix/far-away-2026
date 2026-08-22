@@ -9,6 +9,13 @@ use crate::util::make_mic_icon;
 pub struct Tray {
     _icon: TrayIcon,
     pub quit_id: muda::MenuId,
+    pub pair_id: muda::MenuId,
+}
+
+pub enum TrayAction {
+    None,
+    Quit,
+    Pair,
 }
 
 impl Tray {
@@ -19,11 +26,14 @@ impl Tray {
 
         let quit = MenuItem::new("Quit", true, None);
         let quit_id = quit.id().clone();
+        let pair = MenuItem::new("Pair account…", true, None);
+        let pair_id = pair.id().clone();
 
         let menu = Menu::new();
         menu.append(&MenuItem::new("local-stt (Parakeet INT8)", false, None))?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&MenuItem::new("Ctrl+Shift+Space to record", false, None))?;
+        menu.append(&pair)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
@@ -37,6 +47,7 @@ impl Tray {
         Ok(Self {
             _icon: tray,
             quit_id,
+            pair_id,
         })
     }
 
@@ -44,14 +55,15 @@ impl Tray {
         let _ = self._icon.set_tooltip(Some(tip));
     }
 
-    /// Returns true if Quit was selected.
-    pub fn poll_quit(&self) -> bool {
-        let mut quit = false;
+    pub fn poll_action(&self) -> TrayAction {
+        let mut action = TrayAction::None;
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == self.quit_id {
-                quit = true;
+                action = TrayAction::Quit;
+            } else if event.id == self.pair_id {
+                action = TrayAction::Pair;
             }
         }
-        quit
+        action
     }
 }

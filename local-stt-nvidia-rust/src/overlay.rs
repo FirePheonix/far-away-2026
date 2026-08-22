@@ -5,6 +5,7 @@
 //! from the top bezel: concave flares at the top corners, stadium rounding
 //! along the bottom.
 
+use crate::api::PendingTask;
 use egui::{self, Color32, CornerRadius, Pos2, Rect, RichText, Sense, Shape, Stroke, Vec2};
 
 /// Collapsed notch height (logical px), not counting the top-edge flares.
@@ -13,8 +14,12 @@ pub const PILL_H: f32 = 56.0;
 pub const PILL_W_IDLE: f32 = 420.0;
 /// Extra height added when the transcript result is shown.
 pub const PILL_H_RESULT_EXTRA: f32 = 200.0;
+/// Extra height for the human-feedback task panel.
+pub const PILL_H_FEEDBACK_EXTRA: f32 = 250.0;
 /// Window height when a result is visible.
 pub const PILL_H_RESULT: f32 = PILL_H + PILL_H_RESULT_EXTRA;
+/// Window height when a pending task needs a decision.
+pub const PILL_H_FEEDBACK: f32 = PILL_H + PILL_H_FEEDBACK_EXTRA;
 /// Concave flare radius where the notch meets the top of the screen.
 const FLARE: f32 = 16.0;
 /// Bottom-corner radius (kept constant so expansion doesn't turn into a blob).
@@ -41,6 +46,25 @@ pub enum OverlayState {
     Processing,
     Sending,
     Result { text: String, ok: bool },
+    Feedback {
+        tasks: Vec<PendingTask>,
+        index: usize,
+        changing: bool,
+        change_text: String,
+        busy: bool,
+        status: String,
+    },
+    Pairing { code: String, claim_url: String },
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum OverlayAction {
+    #[default]
+    None,
+    Skip { task_id: String },
+    Abandon { task_id: String },
+    Change { task_id: String, instruction: String },
+    OpenPairUrl { url: String },
 }
 
 pub struct Overlay {
@@ -80,9 +104,51 @@ impl Overlay {
         self.state = OverlayState::Sending;
         self.dismiss_at = None;
     }
+    pub fn show_pairing(&mut self, code: String, claim_url: String) {
+        self.state = OverlayState::Pairing { code, claim_url };
+        self.dismiss_at = None;
+    }
     pub fn show_result(&mut self, text: String, ok: bool, now: f64) {
         self.state = OverlayState::Result { text, ok };
         self.dismiss_at = Some(now + 8.0);
+    }
+    pub fn show_feedback(&mut self, tasks: Vec<PendingTask>) {
+        if tasks.is_empty() {
+            if matches!(self.state, OverlayState::Feedback { .. }) {
+                self.dismiss();
+            }
+            return;
+        }
+        let (index, changing, change_text) = match &self.state {
+            OverlayState::Feedback {
+                index,
+                changing,
+                change_text,
+                ..
+            } => {
+                let idx = (*index).min(tasks.len().saturating_sub(1));
+                (idx, *changing, change_text.clone())
+            }
+            _ => (0, false, String::new()),
+        };
+        self.state = OverlayState::Feedback {
+            tasks,
+            index,
+            changing,
+            change_text,
+            busy: false,
+            status: String::new(),
+        };
+        self.dismiss_at = None;
+    }
+    pub fn set_feedback_busy(&mut self, busy: bool, status: impl Into<String>) {
+        if let OverlayState::Feedback {
+            busy: b, status: s, ..
+        } = &mut self.state
+        {
+            *b = busy;
+            *s = status.into();
+        }
     }
     pub fn dismiss(&mut self) {
         self.state = OverlayState::Hidden;
@@ -93,7 +159,14 @@ impl Overlay {
     }
     pub fn desired_height(&self) -> f32 {
         match self.state {
-            OverlayState::Result { .. } => PILL_H_RESULT,
+            OverlayState::Result { .. } | OverlayState::Pairing { .. } => PILL_H_RESULT,
+            OverlayState::Feedback { changing, .. } => {
+                if changing {
+                    PILL_H_FEEDBACK + 40.0
+                } else {
+                    PILL_H_FEEDBACK
+                }
+            }
             _ => PILL_H,
         }
     }
@@ -120,21 +193,31 @@ impl Overlay {
         }
     }
 
-    /// Draw everything. Returns true if the overlay should be dismissed.
-    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> bool {
+    /// Draw everything. Returns a user action for the app to execute.
+    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) -> OverlayAction {
+        let mut action = OverlayAction::None;
         let mut should_dismiss = false;
+        let sticky = matches!(
+            self.state,
+            OverlayState::Feedback { .. } | OverlayState::Pairing { .. }
+        );
         // Center in the real window, not a guessed monitor width.
         let canvas = ui.max_rect();
         let sw = canvas.width().max(1.0);
 
-        let has_result = matches!(self.state, OverlayState::Result { .. });
-        let pill_w = if has_result {
+        let expanded = matches!(
+            self.state,
+            OverlayState::Result { .. }
+                | OverlayState::Feedback { .. }
+                | OverlayState::Pairing { .. }
+        );
+        let pill_w = if expanded {
             (sw * 0.48).max(PILL_W_IDLE).min(sw - 48.0)
         } else {
             PILL_W_IDLE.min(sw - 48.0)
         };
-        let pill_h = if has_result {
-            PILL_H_RESULT.min(canvas.height())
+        let pill_h = if expanded {
+            self.desired_height().min(canvas.height())
         } else {
             PILL_H
         };
@@ -147,7 +230,7 @@ impl Overlay {
         draw_notch(painter, pill_rect, bg);
 
         let pill_resp = ui.allocate_rect(pill_rect, Sense::click());
-        if pill_resp.clicked() {
+        if pill_resp.clicked() && !sticky {
             should_dismiss = true;
         }
 
@@ -206,7 +289,13 @@ impl Overlay {
                     .max_rect(body)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            let caption = if ok { "Transcript" } else { "Nothing heard" };
+            let caption = if ok {
+                "Done"
+            } else if text.is_empty() {
+                "Nothing heard"
+            } else {
+                "Needs attention"
+            };
             child.label(RichText::new(caption).size(11.0).color(MUTED));
             child.add_space(6.0);
             egui::ScrollArea::vertical()
@@ -222,10 +311,193 @@ impl Overlay {
                 });
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) || should_dismiss {
+        if matches!(self.state, OverlayState::Feedback { .. }) {
+            action = self.draw_feedback_body(ui, pill_rect, pill_w, pill_h);
+        }
+        if matches!(self.state, OverlayState::Pairing { .. }) {
+            if let OverlayAction::OpenPairUrl { url } = self.draw_pairing_body(ui, pill_rect, pill_w, pill_h)
+            {
+                action = OverlayAction::OpenPairUrl { url };
+            }
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if let OverlayState::Feedback { changing, .. } = &mut self.state {
+                if *changing {
+                    *changing = false;
+                } else {
+                    should_dismiss = true;
+                }
+            } else {
+                should_dismiss = true;
+            }
+        }
+        if should_dismiss {
             self.dismiss();
         }
-        should_dismiss
+        action
+    }
+
+    fn draw_feedback_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let mut action = OverlayAction::None;
+        let OverlayState::Feedback {
+            tasks,
+            index,
+            changing,
+            change_text,
+            busy,
+            status,
+        } = &mut self.state
+        else {
+            return OverlayAction::None;
+        };
+        if tasks.is_empty() {
+            return OverlayAction::None;
+        }
+        *index = (*index).min(tasks.len() - 1);
+        let task = tasks[*index].clone();
+        let n = tasks.len();
+        let idx = *index;
+        let is_busy = *busy;
+
+        let body = Rect::from_min_size(
+            Pos2::new(pill_rect.min.x + 18.0, pill_rect.min.y + PILL_H - 4.0),
+            Vec2::new(pill_w - 36.0, (pill_h - PILL_H - 10.0).max(80.0)),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(body)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+
+        child.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("Needs you  ·  {} / {}", idx + 1, n))
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if n > 1 && ui.add(ghost_btn("Next", !is_busy)).clicked() {
+                    *index = (idx + 1) % n;
+                }
+            });
+        });
+        child.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .max_height(72.0)
+            .auto_shrink([false, true])
+            .show(&mut child, |ui| {
+                ui.label(RichText::new(&task.description).size(13.5).color(TEXT));
+            });
+        child.add_space(8.0);
+
+        if *changing {
+            child.label(
+                RichText::new("What should change?")
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            child.add_space(4.0);
+            child.add(
+                egui::TextEdit::multiline(change_text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3)
+                    .hint_text("e.g. use the other calendar, drop step 2…"),
+            );
+            child.add_space(8.0);
+            child.horizontal(|ui| {
+                if ui.add(action_btn("Send change", ACCENT, !is_busy)).clicked()
+                    && !change_text.trim().is_empty()
+                {
+                    action = OverlayAction::Change {
+                        task_id: task.id.clone(),
+                        instruction: change_text.trim().to_string(),
+                    };
+                }
+                if ui.add(ghost_btn("Cancel", !is_busy)).clicked() {
+                    *changing = false;
+                    change_text.clear();
+                }
+            });
+        } else {
+            child.horizontal(|ui| {
+                if ui.add(action_btn("Abandon", RED, !is_busy)).clicked() {
+                    action = OverlayAction::Abandon {
+                        task_id: task.id.clone(),
+                    };
+                }
+                if ui.add(action_btn("Skip", MUTED, !is_busy)).clicked() {
+                    action = OverlayAction::Skip {
+                        task_id: task.id.clone(),
+                    };
+                }
+                if ui.add(action_btn("Change", ACCENT, !is_busy)).clicked() {
+                    *changing = true;
+                }
+            });
+        }
+
+        if !status.is_empty() {
+            child.add_space(6.0);
+            child.label(RichText::new(status.as_str()).size(11.0).color(MUTED));
+        }
+        action
+    }
+
+    fn draw_pairing_body(
+        &self,
+        ui: &mut egui::Ui,
+        pill_rect: Rect,
+        pill_w: f32,
+        pill_h: f32,
+    ) -> OverlayAction {
+        let OverlayState::Pairing { code, claim_url } = &self.state else {
+            return OverlayAction::None;
+        };
+        let mut action = OverlayAction::None;
+        let body = Rect::from_min_size(
+            Pos2::new(pill_rect.min.x + 18.0, pill_rect.min.y + PILL_H - 4.0),
+            Vec2::new(pill_w - 36.0, (pill_h - PILL_H - 10.0).max(60.0)),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(body)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.label(
+            RichText::new("Pair this desktop")
+                .size(11.0)
+                .color(MUTED),
+        );
+        child.add_space(6.0);
+        child.label(
+            RichText::new(format!("Code  {code}"))
+                .size(16.0)
+                .color(TEXT),
+        );
+        child.add_space(6.0);
+        child.label(
+            RichText::new("Sign in in the browser window that just opened. This notch stays until you finish.")
+                .size(12.0)
+                .color(TEXT),
+        );
+        child.add_space(8.0);
+        child.horizontal(|ui| {
+            if ui.add(action_btn("Open login", ACCENT, true)).clicked() {
+                action = OverlayAction::OpenPairUrl {
+                    url: claim_url.clone(),
+                };
+            }
+        });
+        child.add_space(6.0);
+        child.label(RichText::new(claim_url.as_str()).size(10.0).color(MUTED));
+        action
     }
 
     fn accent_color(&self) -> Color32 {
@@ -239,6 +511,7 @@ impl Overlay {
                     RED
                 }
             }
+            OverlayState::Feedback { .. } | OverlayState::Pairing { .. } => ACCENT,
             _ => MUTED,
         }
     }
@@ -295,7 +568,9 @@ impl Overlay {
                     MUTED,
                 );
             }
-            OverlayState::Result { .. } => {
+            OverlayState::Result { .. }
+            | OverlayState::Feedback { .. }
+            | OverlayState::Pairing { .. } => {
                 // Close affordance
                 let s = 5.0;
                 p.line_segment(
@@ -312,6 +587,24 @@ impl Overlay {
             }
         }
     }
+}
+
+fn ghost_btn(label: &str, enabled: bool) -> egui::Button<'_> {
+    egui::Button::new(RichText::new(label).size(12.0).color(TEXT))
+        .fill(THUMB_BG)
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x33, 0x33, 0x33)))
+        .corner_radius(CornerRadius::same(8))
+        .min_size(Vec2::new(64.0, 28.0))
+        .sense(if enabled { Sense::click() } else { Sense::hover() })
+}
+
+fn action_btn(label: &str, tint: Color32, enabled: bool) -> egui::Button<'_> {
+    egui::Button::new(RichText::new(label).size(12.0).color(TEXT))
+        .fill(tint.gamma_multiply(0.28))
+        .stroke(Stroke::new(1.0_f32, tint.gamma_multiply(0.55)))
+        .corner_radius(CornerRadius::same(8))
+        .min_size(Vec2::new(78.0, 28.0))
+        .sense(if enabled { Sense::click() } else { Sense::hover() })
 }
 
 /// Classic capsule mic: head, U-yoke, stem, stand.

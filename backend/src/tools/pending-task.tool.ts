@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { db } from "../config/db.js";
+import { supabaseAdmin } from "../config/supabase.js";
 import type { AnyToolDefinition } from "./types.js";
 import type { ExecutionContext } from "../types/index.js";
 import { randomUUID } from "node:crypto";
@@ -24,17 +24,19 @@ export const pendingTaskTool: AnyToolDefinition = {
     }
 
     const taskId = randomUUID();
-    
-    db.prepare(`
-      INSERT INTO pending_tasks (id, clerk_user_id, run_id, description, required_fields, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `).run(
-      taskId,
-      context.user.clerkUserId,
-      context.request?.id ?? null,
-      params.description,
-      JSON.stringify(params.required_fields)
-    );
+
+    const { error } = await supabaseAdmin.from("pending_tasks").insert({
+      id: taskId,
+      clerk_user_id: context.user.clerkUserId,
+      run_id: context.request?.id ?? null,
+      description: params.description,
+      required_fields: params.required_fields,
+      status: "pending",
+    });
+
+    if (error) {
+      throw new Error(`Failed to create pending task: ${error.message}`);
+    }
 
     return {
       message: "Task created successfully. The assistant pipeline should pause or report that it is waiting for user input.",

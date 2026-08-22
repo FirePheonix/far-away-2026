@@ -3,3 +3,9 @@ dist/
 .env
 secrets/
 *.log
+
+# Local credential store: encrypted OAuth tokens and desktop pairings.
+# Never publish this.
+local.db
+local.db-shm
+local.db-wal
